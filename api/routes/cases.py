@@ -1,11 +1,13 @@
 from fastapi import APIRouter, HTTPException
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from database.models import Case
-import os
-from dotenv import load_dotenv
+from sqlalchemy import func
 
-load_dotenv()
+from database.connection import SessionLocal
+from database.models import (
+    Case,
+    Evidence,
+    Relationship,
+)
+
 
 router = APIRouter(
     prefix="/cases",
@@ -14,30 +16,58 @@ router = APIRouter(
 
 
 # =========================================================
-# DATABASE CONNECTION
+# SERIALIZE CASE
 # =========================================================
 
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_PORT = os.getenv("DB_PORT", "5432")
-DB_NAME = os.getenv("DB_NAME", "postgres")
-DB_USER = os.getenv("DB_USER", "postgres")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "")
+def serialize_case(db, case):
 
-DATABASE_URL = (
-    f"postgresql://{DB_USER}:{DB_PASSWORD}"
-    f"@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-)
+    evidence_count = (
+        db.query(func.count(Evidence.id))
+        .filter(Evidence.case_id == case.id)
+        .scalar()
+        or 0
+    )
 
-engine = create_engine(
-    DATABASE_URL,
-    pool_pre_ping=True,
-)
+    relationship_count = (
+        db.query(func.count(Relationship.id))
+        .filter(Relationship.case_id == case.id)
+        .scalar()
+        or 0
+    )
 
-SessionLocal = sessionmaker(
-    autocommit=False,
-    autoflush=False,
-    bind=engine,
-)
+    return {
+        "id": case.id,
+
+        "fir_number": case.fir_number,
+
+        "case_type": case.case_type,
+
+        "police_station": case.police_station,
+
+        "incident_date": (
+            case.incident_date.isoformat()
+            if case.incident_date
+            else None
+        ),
+
+        "registered_date": (
+            case.registered_date.isoformat()
+            if case.registered_date
+            else None
+        ),
+
+        "status": case.status,
+
+        "created_at": (
+            case.created_at.isoformat()
+            if case.created_at
+            else None
+        ),
+
+        "evidence_count": evidence_count,
+
+        "relationship_count": relationship_count,
+    }
 
 
 # =========================================================
@@ -61,28 +91,7 @@ def get_cases():
             "status": "success",
             "count": len(cases),
             "cases": [
-                {
-                    "id": case.id,
-                    "fir_number": case.fir_number,
-                    "case_type": case.case_type,
-                    "police_station": case.police_station,
-                    "incident_date": (
-                        case.incident_date.isoformat()
-                        if case.incident_date
-                        else None
-                    ),
-                    "registered_date": (
-                        case.registered_date.isoformat()
-                        if case.registered_date
-                        else None
-                    ),
-                    "status": case.status,
-                    "created_at": (
-                        case.created_at.isoformat()
-                        if case.created_at
-                        else None
-                    ),
-                }
+                serialize_case(db, case)
                 for case in cases
             ],
         }
@@ -125,31 +134,11 @@ def get_case(case_id: str):
 
         return {
             "status": "success",
-            "case": {
-                "id": case.id,
-                "fir_number": case.fir_number,
-                "case_type": case.case_type,
-                "police_station": case.police_station,
-                "incident_date": (
-                    case.incident_date.isoformat()
-                    if case.incident_date
-                    else None
-                ),
-                "registered_date": (
-                    case.registered_date.isoformat()
-                    if case.registered_date
-                    else None
-                ),
-                "status": case.status,
-                "created_at": (
-                    case.created_at.isoformat()
-                    if case.created_at
-                    else None
-                ),
-            },
+            "case": serialize_case(db, case),
         }
 
     except HTTPException:
+
         raise
 
     except Exception as e:

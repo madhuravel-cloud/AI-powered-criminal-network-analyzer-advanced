@@ -2,59 +2,94 @@
 
 import Link from "next/link";
 import { Search, ArrowRight } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-const cases = [
-    {
-        id: "FIR-101-2025",
-        type: "Robbery",
-        station: "Central Police Station",
-        date: "2025-01-12",
-        status: "ACTIVE",
-    },
-    {
-        id: "FIR-102-2025",
-        type: "Fraud",
-        station: "North Police Station",
-        date: "2025-01-18",
-        status: "ACTIVE",
-    },
-    {
-        id: "FIR-103-2025",
-        type: "Theft",
-        station: "East Police Station",
-        date: "2025-02-02",
-        status: "ACTIVE",
-    },
-    {
-        id: "FIR-104-2025",
-        type: "Assault",
-        station: "West Police Station",
-        date: "2025-02-10",
-        status: "CLOSED",
-    },
-    {
-        id: "FIR-105-2025",
-        type: "Cyber Crime",
-        station: "Cyber Crime Station",
-        date: "2025-02-19",
-        status: "ACTIVE",
-    },
-];
+import { getCases, type CaseData } from "@/lib/api";
 
 export default function CasesPage() {
+    const [cases, setCases] = useState<CaseData[]>([]);
     const [search, setSearch] = useState("");
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+
+    // =====================================================
+    // LOAD REAL CASES FROM FASTAPI
+    // =====================================================
+
+    useEffect(() => {
+        async function loadCases() {
+            try {
+                setLoading(true);
+                setError(null);
+
+                const data = await getCases();
+
+                setCases(data);
+            } catch (err) {
+                console.error("Failed to load cases:", err);
+
+                setError(
+                    err instanceof Error
+                        ? err.message
+                        : "Failed to load cases"
+                );
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        loadCases();
+    }, []);
+
+    // =====================================================
+    // SEARCH
+    // =====================================================
 
     const filteredCases = useMemo(() => {
-        const query = search.toLowerCase();
+        const query = search.toLowerCase().trim();
 
-        return cases.filter(
-            (item) =>
-                item.id.toLowerCase().includes(query) ||
-                item.type.toLowerCase().includes(query) ||
-                item.station.toLowerCase().includes(query)
+        if (!query) {
+            return cases;
+        }
+
+        return cases.filter((item) =>
+            [
+                item.id,
+                item.fir_number,
+                item.case_type,
+                item.police_station,
+                item.status,
+            ]
+                .filter(Boolean)
+                .some((value) =>
+                    String(value).toLowerCase().includes(query)
+                )
         );
-    }, [search]);
+    }, [search, cases]);
+
+    // =====================================================
+    // FORMAT DATE
+    // =====================================================
+
+    function formatDate(date: string | null) {
+        if (!date) {
+            return "—";
+        }
+
+        return date.split("T")[0];
+    }
+
+    // =====================================================
+    // DISPLAY ID
+    // =====================================================
+
+    function displayCaseId(item: CaseData) {
+        if (item.fir_number) {
+            return item.id.replace("case:", "");
+        }
+
+        return item.id.replace("case:", "");
+    }
 
     return (
         <div className="min-h-screen bg-[#05070b] text-white">
@@ -94,118 +129,150 @@ export default function CasesPage() {
 
                 </div>
 
+                {/* Loading */}
+                {loading && (
+                    <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02]">
+                        <div className="px-6 py-12 text-center text-sm text-white/40">
+                            Loading cases...
+                        </div>
+                    </div>
+                )}
+
+                {/* Error */}
+                {!loading && error && (
+                    <div className="overflow-hidden rounded-2xl border border-red-400/20 bg-red-400/5">
+                        <div className="px-6 py-12 text-center">
+
+                            <p className="text-sm text-red-400">
+                                Failed to load cases
+                            </p>
+
+                            <p className="mt-2 text-xs text-white/30">
+                                {error}
+                            </p>
+
+                        </div>
+                    </div>
+                )}
+
                 {/* Cases */}
-                <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02]">
+                {!loading && !error && (
+                    <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02]">
 
-                    <div className="overflow-x-auto">
+                        <div className="overflow-x-auto">
 
-                        <table className="w-full text-left">
+                            <table className="w-full text-left">
 
-                            <thead className="border-b border-white/10 bg-white/[0.03]">
+                                <thead className="border-b border-white/10 bg-white/[0.03]">
 
-                                <tr className="text-xs uppercase tracking-wider text-white/30">
+                                    <tr className="text-xs uppercase tracking-wider text-white/30">
 
-                                    <th className="px-6 py-4">
-                                        FIR Number
-                                    </th>
+                                        <th className="px-6 py-4">
+                                            FIR Number
+                                        </th>
 
-                                    <th className="px-6 py-4">
-                                        Case Type
-                                    </th>
+                                        <th className="px-6 py-4">
+                                            Case Type
+                                        </th>
 
-                                    <th className="px-6 py-4">
-                                        Police Station
-                                    </th>
+                                        <th className="px-6 py-4">
+                                            Police Station
+                                        </th>
 
-                                    <th className="px-6 py-4">
-                                        Incident Date
-                                    </th>
+                                        <th className="px-6 py-4">
+                                            Incident Date
+                                        </th>
 
-                                    <th className="px-6 py-4">
-                                        Status
-                                    </th>
+                                        <th className="px-6 py-4">
+                                            Status
+                                        </th>
 
-                                    <th className="px-6 py-4">
-                                        Action
-                                    </th>
-
-                                </tr>
-
-                            </thead>
-
-                            <tbody>
-
-                                {filteredCases.map((item) => (
-
-                                    <tr
-                                        key={item.id}
-                                        className="border-b border-white/5 transition-colors hover:bg-white/[0.03]"
-                                    >
-
-                                        <td className="px-6 py-5">
-                                            <span className="font-medium text-cyan-400">
-                                                {item.id}
-                                            </span>
-                                        </td>
-
-                                        <td className="px-6 py-5 text-sm text-white/70">
-                                            {item.type}
-                                        </td>
-
-                                        <td className="px-6 py-5 text-sm text-white/50">
-                                            {item.station}
-                                        </td>
-
-                                        <td className="px-6 py-5 text-sm text-white/50">
-                                            {item.date}
-                                        </td>
-
-                                        <td className="px-6 py-5">
-
-                                            <span
-                                                className={`rounded-full px-3 py-1 text-xs font-medium ${item.status === "ACTIVE"
-                                                    ? "bg-emerald-400/10 text-emerald-400"
-                                                    : "bg-white/10 text-white/40"
-                                                    }`}
-                                            >
-                                                {item.status}
-                                            </span>
-
-                                        </td>
-
-                                        <td className="px-6 py-5">
-
-                                            <Link
-                                                href={`/analysis?case=${encodeURIComponent(
-                                                    item.id
-                                                )}`}
-                                                className="inline-flex items-center gap-2 rounded-lg border border-cyan-400/20 bg-cyan-400/5 px-3 py-2 text-xs font-medium text-cyan-400 transition hover:bg-cyan-400/10"
-                                            >
-                                                Analyze
-
-                                                <ArrowRight size={14} />
-
-                                            </Link>
-
-                                        </td>
+                                        <th className="px-6 py-4">
+                                            Action
+                                        </th>
 
                                     </tr>
 
-                                ))}
+                                </thead>
 
-                            </tbody>
+                                <tbody>
 
-                        </table>
+                                    {filteredCases.map((item) => (
+
+                                        <tr
+                                            key={item.id}
+                                            className="border-b border-white/5 transition-colors hover:bg-white/[0.03]"
+                                        >
+
+                                            <td className="px-6 py-5">
+
+                                                <span className="font-medium text-cyan-400">
+                                                    {displayCaseId(item)}
+                                                </span>
+
+                                            </td>
+
+                                            <td className="px-6 py-5 text-sm text-white/70">
+                                                {item.case_type || "—"}
+                                            </td>
+
+                                            <td className="px-6 py-5 text-sm text-white/50">
+                                                {item.police_station || "—"}
+                                            </td>
+
+                                            <td className="px-6 py-5 text-sm text-white/50">
+                                                {formatDate(item.incident_date)}
+                                            </td>
+
+                                            <td className="px-6 py-5">
+
+                                                <span
+                                                    className={`rounded-full px-3 py-1 text-xs font-medium ${item.status === "ACTIVE"
+                                                        ? "bg-emerald-400/10 text-emerald-400"
+                                                        : item.status === "ONGOING"
+                                                            ? "bg-cyan-400/10 text-cyan-400"
+                                                            : "bg-white/10 text-white/40"
+                                                        }`}
+                                                >
+                                                    {item.status || "UNKNOWN"}
+                                                </span>
+
+                                            </td>
+
+                                            <td className="px-6 py-5">
+
+                                                <Link
+                                                    href={`/analysis?case=${encodeURIComponent(
+                                                        item.id
+                                                    )}`}
+                                                    className="inline-flex items-center gap-2 rounded-lg border border-cyan-400/20 bg-cyan-400/5 px-3 py-2 text-xs font-medium text-cyan-400 transition hover:bg-cyan-400/10"
+                                                >
+                                                    Analyze
+
+                                                    <ArrowRight size={14} />
+
+                                                </Link>
+
+                                            </td>
+
+                                        </tr>
+
+                                    ))}
+
+                                </tbody>
+
+                            </table>
+
+                        </div>
+
+                        {filteredCases.length === 0 && (
+                            <div className="px-6 py-12 text-center text-sm text-white/30">
+                                No cases found.
+                            </div>
+                        )}
 
                     </div>
-
-                    {filteredCases.length === 0 && (
-                        <div className="px-6 py-12 text-center text-sm text-white/30">
-                            No cases found.
-                        </div>
-                    )}
-
-                </div>
+                )}
 
             </div>
         </div>

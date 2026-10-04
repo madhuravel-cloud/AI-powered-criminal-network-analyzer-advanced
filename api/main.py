@@ -1,9 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
+from api.routes.dashboard import router as dashboard_router
 from api.routes.analysis import router as analysis_router
 from api.routes.cases import router as cases_router
-
+from api.routes.network import router as network_router
 
 app = FastAPI(
     title="Criminal Network Analyzer API",
@@ -38,7 +38,8 @@ app.add_middleware(
 app.include_router(
     analysis_router
 )
-
+app.include_router(dashboard_router)
+app.include_router(network_router)
 app.include_router(
     cases_router
 )

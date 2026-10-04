@@ -8,44 +8,29 @@ import {
   Bell,
   BrainCircuit,
   Briefcase,
-  Car,
   ChevronRight,
   Clock3,
   FileSearch,
   Fingerprint,
-  FileText,
-  MapPin,
   Network,
-  Phone,
   Search,
-  Shield,
   Users,
-  Video,
-  WalletCards,
 } from "lucide-react";
 
 import {
   analyzeInvestigation,
+  getDashboard,
   type Candidate,
   type InvestigationAnalysis,
+  type DashboardResponse,
 } from "@/lib/api";
-
-const sources = [
-  { name: "FIR", icon: FileText, count: 48 },
-  { name: "CDR", icon: Phone, count: 71 },
-  { name: "CCTV", icon: Video, count: 63 },
-  { name: "Court", icon: Shield, count: 29 },
-  { name: "Vehicle", icon: Car, count: 36 },
-  { name: "Financial", icon: WalletCards, count: 31 },
-  { name: "Location", icon: MapPin, count: 34 },
-];
 
 const activities = [
   {
     time: "10:42",
     title: "CDR evidence processed",
     description: "New communication relationship identified",
-    icon: Phone,
+    icon: Network,
   },
   {
     time: "10:31",
@@ -57,7 +42,7 @@ const activities = [
     time: "10:18",
     title: "CCTV evidence linked",
     description: "Observation connected to FIR-101-2025",
-    icon: Video,
+    icon: Network,
   },
   {
     time: "09:56",
@@ -111,6 +96,9 @@ function AnimatedBackground() {
 }
 
 export default function Home() {
+  const [dashboard, setDashboard] =
+    useState<DashboardResponse | null>(null);
+
   const [analysis, setAnalysis] =
     useState<InvestigationAnalysis | null>(null);
 
@@ -122,22 +110,33 @@ export default function Home() {
   const [error, setError] =
     useState<string | null>(null);
 
+  // =========================================================
+  // LOAD DASHBOARD + INVESTIGATION ANALYSIS
+  // =========================================================
+
   useEffect(() => {
-    async function loadAnalysis() {
+    async function loadDashboard() {
       try {
         setLoading(true);
         setError(null);
 
-        const response =
-          await analyzeInvestigation("FIR-101-2025");
+        const [
+          dashboardResponse,
+          analysisResponse,
+        ] = await Promise.all([
+          getDashboard(),
+          analyzeInvestigation("FIR-101-2025"),
+        ]);
 
-        setAnalysis(response.analysis);
+        setDashboard(dashboardResponse);
+
+        setAnalysis(analysisResponse.analysis);
 
         if (
-          response.analysis.top_relevant_people.length > 0
+          analysisResponse.analysis.top_relevant_people.length > 0
         ) {
           setSelectedPerson(
-            response.analysis.top_relevant_people[0]
+            analysisResponse.analysis.top_relevant_people[0]
           );
         }
       } catch (err) {
@@ -146,15 +145,19 @@ export default function Home() {
         setError(
           err instanceof Error
             ? err.message
-            : "Unable to load investigation analysis"
+            : "Unable to load dashboard data"
         );
       } finally {
         setLoading(false);
       }
     }
 
-    loadAnalysis();
+    loadDashboard();
   }, []);
+
+  // =========================================================
+  // ANALYSIS DATA
+  // =========================================================
 
   const candidates =
     analysis?.top_relevant_people ?? [];
@@ -162,35 +165,47 @@ export default function Home() {
   const selectedFeatures =
     selectedPerson?.features;
 
+  // =========================================================
+  // REAL DATABASE DASHBOARD STATS
+  // =========================================================
+
   const stats = [
     {
-      label: "Candidates",
-      value: analysis?.candidate_count?.toString() ?? "--",
-      change: "Graph candidates",
+      label: "Cases",
+      value:
+        dashboard?.statistics.total_cases?.toString() ?? "--",
+      change:
+        dashboard?.statistics.active_cases !== undefined
+          ? `${dashboard.statistics.active_cases} active investigations`
+          : "Loading...",
       icon: Briefcase,
     },
     {
       label: "People",
       value:
-        analysis?.seed_people.length?.toString() ?? "--",
-      change: "Investigation seeds",
+        dashboard?.statistics.total_people?.toString() ?? "--",
+      change: "Entities identified as people",
       icon: Users,
     },
     {
       label: "Evidence",
       value:
-        selectedPerson?.evidence_ids.length?.toString() ??
-        "--",
-      change: "Linked evidence",
+        dashboard?.statistics.total_evidence?.toString() ?? "--",
+      change: "Evidence records indexed",
       icon: FileSearch,
     },
     {
-      label: "Investigation Leads",
-      value: candidates.length.toString(),
-      change: "Top relevant people",
-      icon: BrainCircuit,
+      label: "Relationships",
+      value:
+        dashboard?.statistics.total_relationships?.toString() ?? "--",
+      change: "Graph relationships",
+      icon: Network,
     },
   ];
+
+  // =========================================================
+  // LOADING
+  // =========================================================
 
   if (loading) {
     return (
@@ -209,16 +224,20 @@ export default function Home() {
           />
 
           <p className="mt-5 text-sm text-slate-400">
-            Running investigation analysis...
+            Loading intelligence dashboard...
           </p>
 
           <p className="mt-1 text-[10px] uppercase tracking-[0.2em] text-slate-600">
-            Connecting to master graph
+            Connecting to master graph and database
           </p>
         </div>
       </main>
     );
   }
+
+  // =========================================================
+  // ERROR
+  // =========================================================
 
   if (error) {
     return (
@@ -231,7 +250,7 @@ export default function Home() {
           </div>
 
           <h2 className="mt-4 text-base font-semibold">
-            Analysis unavailable
+            Dashboard unavailable
           </h2>
 
           <p className="mt-2 text-xs leading-6 text-slate-500">
@@ -239,12 +258,16 @@ export default function Home() {
           </p>
 
           <p className="mt-4 text-[10px] uppercase tracking-[0.15em] text-slate-700">
-            Check FastAPI and Neo4j services
+            Check FastAPI, PostgreSQL and Neo4j services
           </p>
         </div>
       </main>
     );
   }
+
+  // =========================================================
+  // DASHBOARD
+  // =========================================================
 
   return (
     <main className="min-h-screen bg-[#05080d] text-slate-100">
@@ -873,6 +896,7 @@ export default function Home() {
                     </div>
 
                     <div className="text-left md:text-right">
+
                       <p className="text-3xl font-semibold text-cyan-300">
                         {selectedPerson.relevance_score.toFixed(
                           2
@@ -882,6 +906,7 @@ export default function Home() {
                       <p className="text-[9px] uppercase tracking-[0.15em] text-slate-600">
                         Investigation Relevance
                       </p>
+
                     </div>
 
                   </div>
@@ -891,13 +916,11 @@ export default function Home() {
                     {[
                       [
                         "Connections",
-                        selectedFeatures?.unique_connections ??
-                        0,
+                        selectedFeatures?.unique_connections ?? 0,
                       ],
                       [
                         "Cross Cases",
-                        selectedFeatures?.cross_case_connections ??
-                        0,
+                        selectedFeatures?.cross_case_connections ?? 0,
                       ],
                       [
                         "Evidence",
@@ -909,14 +932,14 @@ export default function Home() {
                       ],
                       [
                         "Relationships",
-                        selectedFeatures?.total_relationships ??
-                        0,
+                        selectedFeatures?.total_relationships ?? 0,
                       ],
                     ].map(([label, value]) => (
                       <div
                         key={label}
                         className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4"
                       >
+
                         <p className="text-[9px] uppercase tracking-[0.15em] text-slate-600">
                           {label}
                         </p>
@@ -924,6 +947,7 @@ export default function Home() {
                         <p className="mt-2 text-xl font-semibold text-slate-200">
                           {value}
                         </p>
+
                       </div>
                     ))}
 
@@ -932,6 +956,7 @@ export default function Home() {
                   <div className="mt-6 grid gap-5 lg:grid-cols-2">
 
                     <div>
+
                       <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-600">
                         Source Layers
                       </p>
@@ -957,9 +982,11 @@ export default function Home() {
                         )}
 
                       </div>
+
                     </div>
 
                     <div>
+
                       <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-600">
                         Connected Cases
                       </p>
@@ -981,6 +1008,7 @@ export default function Home() {
                           ))}
 
                       </div>
+
                     </div>
 
                   </div>
@@ -999,11 +1027,13 @@ export default function Home() {
                             key={index}
                             className="rounded-lg border border-white/[0.05] bg-white/[0.015] px-4 py-3 text-[11px] text-slate-500"
                           >
+
                             <span className="mr-2 text-cyan-400">
                               •
                             </span>
 
                             {signal}
+
                           </div>
                         )
                       )}
@@ -1039,11 +1069,13 @@ export default function Home() {
                   <div className="relative">
 
                     <div className="flex items-center gap-2">
+
                       <BrainCircuit className="h-4 w-4 text-cyan-300" />
 
                       <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-cyan-400">
                         Investigation Intelligence
                       </p>
+
                     </div>
 
                     <h3 className="mt-4 text-base font-semibold text-slate-200">
@@ -1051,9 +1083,11 @@ export default function Home() {
                     </h3>
 
                     <p className="mt-2 max-w-3xl text-sm leading-7 text-slate-500">
+
                       {selectedPerson
                         ? `${selectedPerson.name} currently has the strongest investigation relevance in the selected investigation based on graph connectivity, cross-case relationships and available evidence.`
                         : "The investigation analysis has been completed from the master graph."}
+
                     </p>
 
                     <div className="mt-5 flex flex-wrap gap-2">
@@ -1096,6 +1130,7 @@ export default function Home() {
                   <div className="flex items-center justify-between">
 
                     <div>
+
                       <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-600">
                         Activity
                       </p>
@@ -1103,6 +1138,7 @@ export default function Home() {
                       <h3 className="mt-1 text-sm font-semibold text-slate-200">
                         Recent Intelligence
                       </h3>
+
                     </div>
 
                     <Clock3 className="h-4 w-4 text-slate-600" />
@@ -1126,7 +1162,9 @@ export default function Home() {
                           <div className="relative flex w-10 shrink-0 justify-center">
 
                             <div className="flex h-7 w-7 items-center justify-center rounded-lg border border-white/[0.06] bg-white/[0.025]">
+
                               <Icon className="h-3.5 w-3.5 text-cyan-400/70" />
+
                             </div>
 
                           </div>

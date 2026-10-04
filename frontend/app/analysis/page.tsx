@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 import {
     ArrowLeft,
@@ -19,6 +20,10 @@ import {
 } from "@/lib/api";
 
 export default function AnalysisPage() {
+    const searchParams = useSearchParams();
+
+    const caseId = searchParams.get("case");
+
     const [analysis, setAnalysis] =
         useState<InvestigationAnalysis | null>(null);
 
@@ -31,13 +36,23 @@ export default function AnalysisPage() {
     const [error, setError] =
         useState<string | null>(null);
 
+    // =====================================================
+    // LOAD ANALYSIS FOR SELECTED CASE
+    // =====================================================
+
     async function loadAnalysis() {
         try {
             setLoading(true);
             setError(null);
 
+            if (!caseId) {
+                throw new Error(
+                    "No case was selected. Please open Analysis from a case."
+                );
+            }
+
             const response =
-                await analyzeInvestigation("FIR-101-2025");
+                await analyzeInvestigation(caseId);
 
             setAnalysis(response.analysis);
 
@@ -47,6 +62,8 @@ export default function AnalysisPage() {
                 setSelected(
                     response.analysis.top_relevant_people[0]
                 );
+            } else {
+                setSelected(null);
             }
         } catch (err) {
             setError(
@@ -59,9 +76,13 @@ export default function AnalysisPage() {
         }
     }
 
+    // =====================================================
+    // RUN WHEN CASE CHANGES
+    // =====================================================
+
     useEffect(() => {
         loadAnalysis();
-    }, []);
+    }, [caseId]);
 
     return (
         <section className="min-h-screen bg-[#070b12] p-8 text-white">
@@ -69,16 +90,17 @@ export default function AnalysisPage() {
 
                 {/* BACK */}
                 <Link
-                    href="/"
+                    href="/cases"
                     className="mb-4 inline-flex items-center gap-2 text-sm text-slate-400 transition hover:text-white"
                 >
                     <ArrowLeft size={16} />
-                    Back to Overview
+                    Back to Cases
                 </Link>
 
                 {/* HEADER */}
                 <div className="mb-8 flex items-end justify-between">
                     <div>
+
                         <div className="mb-2 flex items-center gap-2 text-xs text-emerald-400">
                             <span className="h-2 w-2 rounded-full bg-emerald-400" />
                             ANALYSIS ENGINE ONLINE
@@ -91,6 +113,14 @@ export default function AnalysisPage() {
                         <p className="mt-1 text-slate-400">
                             Direct predictive analysis from the Master Graph.
                         </p>
+
+                        {/* SELECTED CASE */}
+                        {caseId && (
+                            <div className="mt-3 text-xs text-cyan-400">
+                                CASE: {caseId.replace("case:", "")}
+                            </div>
+                        )}
+
                     </div>
 
                     <button
@@ -107,6 +137,7 @@ export default function AnalysisPage() {
                 {/* LOADING */}
                 {loading && (
                     <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-12 text-center">
+
                         <Brain className="mx-auto mb-4 animate-pulse text-slate-500" />
 
                         <div className="text-slate-300">
@@ -116,18 +147,22 @@ export default function AnalysisPage() {
                         <div className="mt-2 text-sm text-slate-600">
                             Querying Neo4j and calculating candidate relevance.
                         </div>
+
                     </div>
                 )}
 
                 {/* ERROR */}
                 {error && (
                     <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-6">
+
                         <div className="flex items-center gap-3 text-red-400">
+
                             <AlertCircle size={20} />
 
                             <span className="font-medium">
                                 Analysis failed
                             </span>
+
                         </div>
 
                         <p className="mt-3 text-sm text-slate-400">
@@ -140,6 +175,7 @@ export default function AnalysisPage() {
                         >
                             Retry
                         </button>
+
                     </div>
                 )}
 
@@ -148,6 +184,7 @@ export default function AnalysisPage() {
                     <>
                         {/* STATS */}
                         <div className="mb-6 grid gap-4 sm:grid-cols-3">
+
                             <Stat
                                 label="INVESTIGATION"
                                 value={analysis.case_id}
@@ -166,6 +203,7 @@ export default function AnalysisPage() {
                                     analysis.candidate_count
                                 )}
                             />
+
                         </div>
 
                         {/* MAIN GRID */}
@@ -175,22 +213,28 @@ export default function AnalysisPage() {
                             <div className="rounded-2xl border border-white/10 bg-white/[0.025]">
 
                                 <div className="border-b border-white/10 p-6">
+
                                     <div className="flex items-center gap-2">
+
                                         <Users size={18} />
 
                                         <h2 className="font-medium">
                                             Top Relevant People
                                         </h2>
+
                                     </div>
 
                                     <p className="mt-1 text-sm text-slate-500">
                                         Ranked by investigation-specific relevance.
                                     </p>
+
                                 </div>
 
                                 <div>
+
                                     {analysis.top_relevant_people.map(
                                         (person, index) => (
+
                                             <button
                                                 key={person.person_id}
                                                 onClick={() =>
@@ -202,16 +246,19 @@ export default function AnalysisPage() {
                                                     : "hover:bg-white/[0.03]"
                                                     }`}
                                             >
+
                                                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/10 text-sm">
                                                     {index + 1}
                                                 </div>
 
                                                 <div className="min-w-0 flex-1">
+
                                                     <div className="font-medium">
                                                         {person.name}
                                                     </div>
 
                                                     <div className="mt-1 text-xs text-slate-500">
+
                                                         {
                                                             person
                                                                 .features
@@ -224,17 +271,23 @@ export default function AnalysisPage() {
                                                                 .length
                                                         }{" "}
                                                         source layers
+
                                                     </div>
+
                                                 </div>
 
                                                 <div className="w-24">
+
                                                     <div className="text-right text-sm font-medium">
+
                                                         {person.relevance_score.toFixed(
                                                             2
                                                         )}
+
                                                     </div>
 
                                                     <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
+
                                                         <div
                                                             className="h-full rounded-full bg-white"
                                                             style={{
@@ -244,19 +297,27 @@ export default function AnalysisPage() {
                                                                 )}%`,
                                                             }}
                                                         />
+
                                                     </div>
+
                                                 </div>
+
                                             </button>
+
                                         )
                                     )}
+
                                 </div>
+
                             </div>
 
                             {/* SELECTED PERSON */}
                             {selected && (
+
                                 <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-6">
 
                                     <div className="mb-6">
+
                                         <div className="text-xs tracking-widest text-slate-600">
                                             SELECTED CANDIDATE
                                         </div>
@@ -268,10 +329,12 @@ export default function AnalysisPage() {
                                         <div className="mt-2 text-sm text-slate-500">
                                             {selected.person_id}
                                         </div>
+
                                     </div>
 
                                     {/* RELEVANCE */}
                                     <div className="mb-6 rounded-xl border border-white/10 bg-white/[0.03] p-4">
+
                                         <div className="text-xs text-slate-500">
                                             INVESTIGATION RELEVANCE
                                         </div>
@@ -286,10 +349,12 @@ export default function AnalysisPage() {
                                             This is an investigative ranking signal,
                                             not a probability of guilt.
                                         </div>
+
                                     </div>
 
                                     {/* METRICS */}
                                     <div className="grid grid-cols-2 gap-3">
+
                                         <Metric
                                             icon={
                                                 <Users size={15} />
@@ -333,56 +398,78 @@ export default function AnalysisPage() {
                                                     .length
                                             }
                                         />
+
                                     </div>
 
                                     {/* SIGNALS */}
                                     <div className="mt-6 border-t border-white/10 pt-5">
+
                                         <div className="text-xs tracking-widest text-slate-600">
                                             INVESTIGATION SIGNALS
                                         </div>
 
                                         <div className="mt-3 space-y-2">
+
                                             {selected.signals.map(
                                                 (signal) => (
+
                                                     <div
                                                         key={signal}
                                                         className="rounded-lg bg-white/[0.03] px-3 py-2 text-xs leading-5 text-slate-400"
                                                     >
                                                         {signal}
                                                     </div>
+
                                                 )
                                             )}
+
                                         </div>
+
                                     </div>
 
                                     {/* EVIDENCE */}
                                     <div className="mt-6 border-t border-white/10 pt-5">
+
                                         <div className="text-xs tracking-widest text-slate-600">
                                             EVIDENCE REFERENCES
                                         </div>
 
                                         <div className="mt-3 space-y-2">
+
                                             {selected.evidence_ids.map(
                                                 (id) => (
+
                                                     <div
                                                         key={id}
                                                         className="rounded-lg border border-white/5 px-3 py-2 font-mono text-[11px] text-slate-500"
                                                     >
                                                         {id}
                                                     </div>
+
                                                 )
                                             )}
+
                                         </div>
+
                                     </div>
+
                                 </div>
+
                             )}
+
                         </div>
                     </>
                 )}
+
             </div>
         </section>
     );
 }
+
+
+// =========================================================
+// STAT
+// =========================================================
 
 function Stat({
     label,
@@ -393,6 +480,7 @@ function Stat({
 }) {
     return (
         <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-5">
+
             <div className="text-[10px] tracking-widest text-slate-600">
                 {label}
             </div>
@@ -400,9 +488,15 @@ function Stat({
             <div className="mt-2 text-2xl font-semibold">
                 {value}
             </div>
+
         </div>
     );
 }
+
+
+// =========================================================
+// METRIC
+// =========================================================
 
 function Metric({
     icon,
@@ -415,17 +509,21 @@ function Metric({
 }) {
     return (
         <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3">
+
             <div className="flex items-center gap-2 text-slate-500">
+
                 {icon}
 
                 <span className="text-xs">
                     {label}
                 </span>
+
             </div>
 
             <div className="mt-2 text-lg font-medium">
                 {value}
             </div>
+
         </div>
     );
 }
