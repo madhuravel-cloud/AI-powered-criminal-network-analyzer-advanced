@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.routes.analysis import router as analysis_router
+from api.routes.cases import router as cases_router
 
 
 app = FastAPI(
@@ -11,20 +12,45 @@ app = FastAPI(
 )
 
 
+# =========================================================
+# CORS
+# =========================================================
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+
+    allow_origins=[
+        "http://localhost:3000"
+    ],
+
     allow_credentials=True,
+
     allow_methods=["*"],
+
     allow_headers=["*"],
 )
 
 
-app.include_router(analysis_router)
+# =========================================================
+# ROUTERS
+# =========================================================
 
+app.include_router(
+    analysis_router
+)
+
+app.include_router(
+    cases_router
+)
+
+
+# =========================================================
+# ROOT
+# =========================================================
 
 @app.get("/")
 def root():
+
     return {
         "system": "Criminal Network Analyzer",
         "status": "operational",
@@ -32,13 +58,18 @@ def root():
     }
 
 
+# =========================================================
+# HEALTH
+# =========================================================
+
 @app.get("/health")
 def health():
+
     return {
         "status": "healthy",
+
         "services": {
             "api": "online",
-            "neo4j": "connected",
             "analysis": "online",
         },
     }

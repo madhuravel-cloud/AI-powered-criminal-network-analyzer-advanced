@@ -5,7 +5,6 @@ import { motion } from "framer-motion";
 
 import {
   Activity,
-  BarChart3,
   Bell,
   BrainCircuit,
   Briefcase,
@@ -15,7 +14,6 @@ import {
   FileSearch,
   Fingerprint,
   FileText,
-  LayoutDashboard,
   MapPin,
   Network,
   Phone,
@@ -252,136 +250,7 @@ export default function Home() {
     <main className="min-h-screen bg-[#05080d] text-slate-100">
       <AnimatedBackground />
 
-      <div className="relative z-10 flex min-h-screen">
-
-        {/* SIDEBAR */}
-
-        <aside className="hidden w-[250px] shrink-0 border-r border-white/[0.06] bg-[#070b11]/90 backdrop-blur-xl lg:flex lg:flex-col">
-
-          <div className="flex h-[78px] items-center border-b border-white/[0.06] px-6">
-            <div className="flex items-center gap-3">
-
-              <div className="relative flex h-10 w-10 items-center justify-center rounded-xl border border-cyan-400/20 bg-cyan-400/[0.08]">
-                <Network className="h-5 w-5 text-cyan-300" />
-
-                <span className="absolute inset-0 animate-ping rounded-xl border border-cyan-400/10" />
-              </div>
-
-              <div>
-                <div className="text-sm font-semibold tracking-wide">
-                  CRIMINAL
-                </div>
-
-                <div className="text-[10px] font-medium tracking-[0.28em] text-cyan-400">
-                  NETWORK ANALYZER
-                </div>
-              </div>
-
-            </div>
-          </div>
-
-          <div className="px-4 py-6">
-            <p className="mb-3 px-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-600">
-              Investigation
-            </p>
-
-            <nav className="space-y-1">
-              {[
-                {
-                  label: "Overview",
-                  icon: LayoutDashboard,
-                  active: true,
-                },
-                {
-                  label: "Cases",
-                  icon: Briefcase,
-                },
-                {
-                  label: "Evidence",
-                  icon: FileSearch,
-                },
-                {
-                  label: "Network",
-                  icon: Network,
-                },
-                {
-                  label: "Analysis",
-                  icon: BarChart3,
-                },
-              ].map((item) => {
-                const Icon = item.icon;
-
-                return (
-                  <motion.button
-                    key={item.label}
-                    whileHover={{ x: 3 }}
-                    className={`group flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm transition ${item.active
-                      ? "border border-cyan-400/10 bg-cyan-400/[0.08] text-cyan-300"
-                      : "text-slate-500 hover:bg-white/[0.03] hover:text-slate-200"
-                      }`}
-                  >
-                    <Icon className="h-[17px] w-[17px]" />
-
-                    <span>{item.label}</span>
-
-                    {item.active && (
-                      <span className="ml-auto h-1.5 w-1.5 rounded-full bg-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.8)]" />
-                    )}
-                  </motion.button>
-                );
-              })}
-            </nav>
-          </div>
-
-          <div className="px-4">
-            <p className="mb-3 px-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-600">
-              Data Sources
-            </p>
-
-            <div className="space-y-1">
-              {sources.map((source) => {
-                const Icon = source.icon;
-
-                return (
-                  <button
-                    key={source.name}
-                    className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-slate-500 transition hover:bg-white/[0.03] hover:text-slate-200"
-                  >
-                    <Icon className="h-4 w-4" />
-
-                    <span>{source.name}</span>
-
-                    <span className="ml-auto text-[11px] text-slate-700">
-                      {source.count}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="mt-auto border-t border-white/[0.06] p-4">
-            <div className="rounded-xl border border-emerald-400/10 bg-emerald-400/[0.04] p-3">
-
-              <div className="flex items-center gap-2">
-                <span className="relative flex h-2 w-2">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-50" />
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
-                </span>
-
-                <span className="text-[11px] font-medium text-emerald-300">
-                  SYSTEM OPERATIONAL
-                </span>
-              </div>
-
-              <p className="mt-2 text-[10px] leading-relaxed text-slate-600">
-                Master graph and analysis services are online.
-              </p>
-
-            </div>
-          </div>
-
-        </aside>
+      <div className="relative z-10 min-h-screen">
 
         {/* MAIN */}
 
