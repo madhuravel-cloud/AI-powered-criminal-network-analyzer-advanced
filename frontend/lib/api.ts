@@ -1,78 +1,11 @@
 const API_BASE_URL =
-    process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    process.env.NEXT_PUBLIC_API_URL ||
+    "http://localhost:8000";
 
 
-// =========================================================
-// ANALYSIS TYPES
-// =========================================================
-
-export interface SeedPerson {
-    person_id: string;
-    name: string;
-}
-
-export interface FeatureSet {
-    unique_connections: number;
-    total_relationships: number;
-    connected_people: number;
-    connected_phones: number;
-    connected_vehicles: number;
-    connected_locations: number;
-    connected_accounts: number;
-    connected_cases: number;
-    case_relationship_count: number;
-    cross_case_connections: number;
-}
-
-export interface SupportingRelationship {
-    graph_relationship: string;
-    relationship_type: string | null;
-    connected_entity_id: string | null;
-    connected_entity: string | null;
-    source_layer: string | null;
-    timestamp: string | null;
-    evidence_id: string | null;
-    confidence: number | null;
-}
-
-export interface TimelineEvent {
-    timestamp: string | null;
-    relationship_type: string | null;
-    source_layer: string | null;
-    connected_entity_id: string | null;
-    connected_entity: string | null;
-    evidence_id: string | null;
-}
-
-export interface Candidate {
-    person_id: string;
-    name: string;
-    relevance_score: number;
-    features: FeatureSet;
-    supporting_relationships: SupportingRelationship[];
-    connected_cases: string[];
-    source_layers: string[];
-    evidence_ids: string[];
-    timeline: TimelineEvent[];
-    signals: string[];
-}
-
-export interface InvestigationAnalysis {
-    case_id: string;
-    seed_people: SeedPerson[];
-    candidate_count: number;
-    top_relevant_people: Candidate[];
-}
-
-export interface AnalysisResponse {
-    status: string;
-    analysis: InvestigationAnalysis;
-}
-
-
-// =========================================================
-// CASE TYPES
-// =========================================================
+// ============================================================
+// CASES
+// ============================================================
 
 export interface CaseData {
     id: string;
@@ -87,11 +20,13 @@ export interface CaseData {
     relationship_count: number;
 }
 
+
 export interface CasesResponse {
     status: string;
     count: number;
     cases: CaseData[];
 }
+
 
 export interface CaseResponse {
     status: string;
@@ -99,71 +34,39 @@ export interface CaseResponse {
 }
 
 
-// =========================================================
-// ANALYSIS API
-// =========================================================
-
-export async function analyzeInvestigation(
-    caseId: string
-): Promise<AnalysisResponse> {
-
-    const response = await fetch(
-        `${API_BASE_URL}/investigations/${encodeURIComponent(
-            caseId
-        )}/analyze`,
-        {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-        }
-    );
-
-    if (!response.ok) {
-
-        const errorText = await response.text();
-
-        throw new Error(
-            `Analysis failed (${response.status}): ${errorText}`
-        );
-    }
-
-    return response.json();
+export interface RelevantCasesResponse {
+    status: string;
+    seed_case: string;
+    count: number;
+    cases: CaseData[];
 }
 
-
-// =========================================================
-// GET ALL CASES
-// =========================================================
 
 export async function getCases(): Promise<CaseData[]> {
 
     const response = await fetch(
         `${API_BASE_URL}/cases`,
         {
-            method: "GET",
             cache: "no-store",
         }
     );
 
     if (!response.ok) {
 
-        const errorText = await response.text();
+        const errorText =
+            await response.text();
 
         throw new Error(
             `Failed to fetch cases (${response.status}): ${errorText}`
         );
     }
 
-    const data: CasesResponse = await response.json();
+    const data: CasesResponse =
+        await response.json();
 
     return data.cases;
 }
 
-
-// =========================================================
-// GET SINGLE CASE
-// =========================================================
 
 export async function getCase(
     caseId: string
@@ -172,27 +75,58 @@ export async function getCase(
     const response = await fetch(
         `${API_BASE_URL}/cases/${encodeURIComponent(caseId)}`,
         {
-            method: "GET",
             cache: "no-store",
         }
     );
 
     if (!response.ok) {
 
-        const errorText = await response.text();
+        const errorText =
+            await response.text();
 
         throw new Error(
             `Failed to fetch case (${response.status}): ${errorText}`
         );
     }
 
-    const data: CaseResponse = await response.json();
+    const data: CaseResponse =
+        await response.json();
 
     return data.case;
 }
-// =========================================================
+
+
+export async function getRelevantCases(
+    caseId: string
+): Promise<CaseData[]> {
+
+    const response = await fetch(
+        `${API_BASE_URL}/cases/relevant/${encodeURIComponent(caseId)}`,
+        {
+            cache: "no-store",
+        }
+    );
+
+    if (!response.ok) {
+
+        const errorText =
+            await response.text();
+
+        throw new Error(
+            `Failed to fetch relevant cases (${response.status}): ${errorText}`
+        );
+    }
+
+    const data: RelevantCasesResponse =
+        await response.json();
+
+    return data.cases;
+}
+
+
+// ============================================================
 // DASHBOARD
-// =========================================================
+// ============================================================
 
 export interface DashboardStatistics {
     total_cases: number;
@@ -203,38 +137,37 @@ export interface DashboardStatistics {
     total_relationships: number;
 }
 
+
+export interface DashboardCase {
+    id: string;
+    fir_number: string | null;
+    case_type: string | null;
+    police_station: string | null;
+    incident_date: string | null;
+    registered_date: string | null;
+    status: string | null;
+    created_at: string | null;
+}
+
+
 export interface DashboardCaseType {
     type: string;
     count: number;
 }
+
 
 export interface DashboardEvidenceSource {
     type: string;
     count: number;
 }
 
-export interface DashboardRecentCase {
-    id: string;
-    fir_number: string | null;
-    case_type: string | null;
-    police_station: string | null;
-    status: string | null;
-    incident_date: string | null;
-    created_at: string | null;
-    evidence_count: number;
-    relationship_count: number;
-}
 
 export interface DashboardResponse {
     status: string;
-
     statistics: DashboardStatistics;
-
     case_types: DashboardCaseType[];
-
     evidence_sources: DashboardEvidenceSource[];
-
-    recent_cases: DashboardRecentCase[];
+    recent_cases: DashboardCase[];
 }
 
 
@@ -243,14 +176,14 @@ export async function getDashboard(): Promise<DashboardResponse> {
     const response = await fetch(
         `${API_BASE_URL}/dashboard`,
         {
-            method: "GET",
             cache: "no-store",
         }
     );
 
     if (!response.ok) {
 
-        const errorText = await response.text();
+        const errorText =
+            await response.text();
 
         throw new Error(
             `Failed to fetch dashboard (${response.status}): ${errorText}`
@@ -259,182 +192,232 @@ export async function getDashboard(): Promise<DashboardResponse> {
 
     return response.json();
 }
-export interface NetworkNode {
-    id: string;
-    neo4j_id: string;
-    label: string;
-    type: string;
-    labels: string[];
-    source_layer: string | null;
-    properties: Record<string, unknown>;
+
+
+// ============================================================
+// ANALYSIS
+// ============================================================
+
+export interface SeedPerson {
+    person_id: string;
+    name: string;
 }
 
-export interface NetworkEdge {
-    id: string;
-    source: string;
-    target: string;
-    type: string;
-    source_layer: string | null;
-    properties: Record<string, unknown>;
+
+export interface CandidateFeatures {
+    unique_connections?: number;
+    total_relationships?: number;
+    degree?: number;
+    connected_people?: number;
+    connected_phones?: number;
+    connected_vehicles?: number;
+    connected_locations?: number;
+    connected_accounts?: number;
+    connected_cases?: number;
+    case_relationship_count?: number;
+    cross_case_connections?: number;
+    cdr_call_count?: number;
+    cdr_unique_contacts?: number;
+    cdr_total_duration?: number;
+    cctv_observation_count?: number;
+    cctv_unique_locations?: number;
+    cctv_vehicle_links?: number;
+    vehicle_links?: number;
+    unique_vehicles?: number;
+    location_links?: number;
+    unique_locations?: number;
+    financial_transaction_count?: number;
+    financial_total_amount?: number;
+    evidence_count?: number;
+    source_layer_count?: number;
+    relationship_type_count?: number;
+    [key: string]:
+    | number
+    | string
+    | boolean
+    | null
+    | undefined;
 }
 
-export interface NetworkFeatures {
-    degree: number;
-    unique_connections: number;
-    total_relationships: number;
 
-    connected_people: number;
-    connected_phones: number;
-    connected_vehicles: number;
-    connected_locations: number;
-    connected_accounts: number;
-    connected_cases: number;
-
-    indirect_connections: number;
-
-    case_relationship_count: number;
-    cross_case_connections: number;
-
-    cdr_call_count: number;
-
-    relationship_type_count: number;
-
-    case_ids: string[];
-
-    source_layer_count: number;
-    source_layers: string[];
-
-    node_type: string;
+export interface SupportingRelationship {
+    graph_relationship?: string;
+    relationship_type?: string;
+    connected_entity_id?: string;
+    connected_entity?: string;
+    source_layer?: string;
+    timestamp?: string;
+    evidence_id?: string;
+    confidence?: number;
+    [key: string]: unknown;
 }
 
-export interface NetworkGraphMetrics {
-    degree_centrality: number;
-    betweenness_centrality: number;
-    closeness_centrality: number;
+
+export interface TimelineEvent {
+    timestamp?: string;
+    relationship_type?: string;
+    source_layer?: string;
+    connected_entity_id?: string;
+    connected_entity?: string;
+    evidence_id?: string;
+    [key: string]: unknown;
 }
 
-export interface NetworkSignal {
-    type: string;
-    severity: "HIGH" | "MEDIUM" | "LOW";
-    message: string;
+
+export interface Candidate {
+    person_id?: string;
+    name?: string;
+    relevance_score?: number;
+    features?: CandidateFeatures;
+    supporting_relationships?: SupportingRelationship[];
+    connected_cases?: string[];
+    source_layers?: string[];
+    evidence_ids?: string[];
+    timeline?: TimelineEvent[];
+    signals?: string[];
+    [key: string]: unknown;
 }
 
-export interface NetworkCandidate {
-    id: string;
-    label: string;
-    type: string;
-    source_layer: string | null;
-    properties: Record<string, unknown>;
 
-    features: NetworkFeatures;
-
-    graph_metrics?: NetworkGraphMetrics;
-
-    relevance_score: number;
-
-    signals: NetworkSignal[];
+export interface InvestigationAnalysis {
+    case_id: string;
+    seed_people: SeedPerson[];
+    candidate_count: number;
+    top_relevant_people: Candidate[];
+    [key: string]: unknown;
 }
 
-export interface NetworkGraph {
-    nodes: NetworkNode[];
-    edges: NetworkEdge[];
 
-    node_count: number;
-    edge_count: number;
-
-    total_nodes: number;
-    total_relationships: number;
-}
-
-export interface NetworkResponse {
+export interface AnalysisResponse {
     status: string;
-
-    investigation: {
-        case_id: string | null;
-        case_found: boolean;
-        seed_count: number;
-    };
-
-    graph: NetworkGraph;
-
-    analysis: {
-        candidate_count: number;
-        top_leads: NetworkCandidate[];
-    };
-
-    engine: {
-        graph_engine: string;
-        source_graph: string;
-        analysis_type: string;
-    };
+    analysis: InvestigationAnalysis;
 }
 
-export async function getNetwork(
-    options?: {
-        caseId?: string;
-        entityType?: string;
-        sourceLayer?: string;
-        search?: string;
-        limit?: number;
-    }
-): Promise<NetworkResponse> {
 
-    const params = new URLSearchParams();
-
-    if (options?.caseId) {
-        params.set(
-            "case_id",
-            options.caseId
-        );
-    }
-
-    if (options?.entityType) {
-        params.set(
-            "entity_type",
-            options.entityType
-        );
-    }
-
-    if (options?.sourceLayer) {
-        params.set(
-            "source_layer",
-            options.sourceLayer
-        );
-    }
-
-    if (options?.search) {
-        params.set(
-            "search",
-            options.search
-        );
-    }
-
-    if (options?.limit) {
-        params.set(
-            "limit",
-            options.limit.toString()
-        );
-    }
-
-    const query = params.toString();
+export async function analyzeInvestigation(
+    caseId: string
+): Promise<InvestigationAnalysis> {
 
     const response = await fetch(
-        `${API_BASE_URL}/network${query ? `?${query}` : ""
-        }`,
+        `${API_BASE_URL}/investigations/${encodeURIComponent(caseId)}/analyze`,
         {
-            method: "GET",
+            method: "POST",
             cache: "no-store",
         }
     );
 
     if (!response.ok) {
+
         const errorText =
             await response.text();
 
         throw new Error(
-            `Failed to fetch network analysis (${response.status}): ${errorText}`
+            `Failed to analyze investigation (${response.status}): ${errorText}`
         );
     }
 
-    return response.json();
+    const data: AnalysisResponse =
+        await response.json();
+
+    return data.analysis;
+}
+
+
+// ============================================================
+// EVIDENCE
+// ============================================================
+
+export interface EvidenceData {
+    id: string;
+    case_id: string;
+    evidence_type: string | null;
+    source: string | null;
+    storage_path: string | null;
+    extracted_text: string | null;
+    file_hash: string | null;
+    layer_id: string | null;
+    created_at: string | null;
+}
+
+
+export interface EvidenceResponse {
+    status: string;
+    count: number;
+    evidence: EvidenceData[];
+}
+
+
+export interface EvidenceCreate {
+    id: string;
+    case_id: string;
+    evidence_type: string;
+    source?: string;
+    storage_path?: string;
+    extracted_text?: string;
+    file_hash?: string;
+    layer_id?: string;
+}
+
+
+export async function getEvidence(
+    caseId?: string
+): Promise<EvidenceData[]> {
+
+    const url = caseId
+        ? `${API_BASE_URL}/evidence?case_id=${encodeURIComponent(caseId)}`
+        : `${API_BASE_URL}/evidence`;
+
+    const response = await fetch(
+        url,
+        {
+            cache: "no-store",
+        }
+    );
+
+    if (!response.ok) {
+
+        const errorText =
+            await response.text();
+
+        throw new Error(
+            `Failed to fetch evidence (${response.status}): ${errorText}`
+        );
+    }
+
+    const data: EvidenceResponse =
+        await response.json();
+
+    return data.evidence;
+}
+
+
+export async function createEvidence(
+    evidence: EvidenceCreate
+): Promise<EvidenceData> {
+
+    const response = await fetch(
+        `${API_BASE_URL}/evidence`,
+        {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(evidence),
+        }
+    );
+
+    if (!response.ok) {
+
+        const errorText =
+            await response.text();
+
+        throw new Error(
+            `Failed to create evidence (${response.status}): ${errorText}`
+        );
+    }
+
+    const data =
+        await response.json();
+
+    return data.evidence;
 }

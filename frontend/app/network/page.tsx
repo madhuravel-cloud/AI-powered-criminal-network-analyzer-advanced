@@ -2,14 +2,26 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-    Network,
+    Network as NetworkIcon,
+    RefreshCw,
     Search,
-    RotateCcw,
-    ChevronLeft,
-    Database,
-    ArrowRight,
-    ExternalLink,
+    X,
 } from "lucide-react";
+
+import {
+    ReactFlow,
+    Background,
+    Controls,
+    MiniMap,
+    Handle,
+    Position,
+    type Node,
+    type Edge,
+    type NodeProps,
+} from "@xyflow/react";
+
+import "@xyflow/react/dist/style.css";
+
 
 const API_BASE_URL =
     process.env.NEXT_PUBLIC_API_URL ||
@@ -17,11 +29,11 @@ const API_BASE_URL =
 
 const CASE_ID = "case:FIR-101-2025";
 
+
 type GraphNode = {
     id: string;
-    label: string;
     type: string;
-    source_layer?: string | null;
+    label: string;
     properties?: Record<string, unknown>;
 };
 
@@ -35,1058 +47,669 @@ type GraphEdge = {
 
 type NetworkResponse = {
     status: string;
-    count: number;
-    nodes: GraphNode[];
-    edges: GraphEdge[];
+    network: {
+        case_id: string;
+        focused_entity?: string;
+        nodes: GraphNode[];
+        edges: GraphEdge[];
+    };
 };
 
-type FocusResponse = {
-    status: string;
-    selected_entity: GraphNode;
-    nodes: GraphNode[];
-    edges: GraphEdge[];
-    connection_count: number;
+
+const typeStyles: Record<string, string> = {
+    Case: "border-red-400 bg-red-500/20",
+    Person: "border-cyan-400 bg-cyan-500/20",
+    Phone: "border-blue-400 bg-blue-500/20",
+    Vehicle: "border-yellow-400 bg-yellow-500/20",
+    Location: "border-green-400 bg-green-500/20",
+    Account: "border-purple-400 bg-purple-500/20",
+    Organization: "border-orange-400 bg-orange-500/20",
+    CourtCase: "border-pink-400 bg-pink-500/20",
+    Evidence: "border-slate-400 bg-slate-500/20",
 };
 
-type HistoryItem = {
-    node: GraphNode;
-    graph: FocusResponse;
+
+function GraphNodeCard({
+    data,
+}: NodeProps) {
+    const nodeType = String(data.type || "Unknown");
+
+    return (
+        <>
+            <Handle
+                type="target"
+                position={Position.Top}
+                className="!bg-cyan-400"
+            />
+
+            <div
+                className={`
+                    min-w-[150px]
+                    max-w-[190px]
+                    rounded-xl
+                    border
+                    px-4
+                    py-3
+                    shadow-2xl
+                    backdrop-blur-xl
+                    ${typeStyles[nodeType] || "border-white/20 bg-white/10"}
+                `}
+            >
+                <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.18em] text-white/40">
+                    {nodeType}
+                </div>
+
+                <div className="truncate text-sm font-semibold text-white">
+                    {String(data.label)}
+                </div>
+
+                <div className="mt-1 truncate text-[10px] text-white/40">
+                    {String(data.id)}
+                </div>
+            </div>
+
+            <Handle
+                type="source"
+                position={Position.Bottom}
+                className="!bg-cyan-400"
+            />
+        </>
+    );
+}
+
+
+const nodeTypes = {
+    graphNode: GraphNodeCard,
 };
+
+
+function convertNodes(
+    nodes: GraphNode[],
+): Node[] {
+    const count = nodes.length;
+
+    return nodes.map((node, index) => {
+        const angle =
+            (index / Math.max(count, 1)) *
+            Math.PI *
+            2;
+
+        const radius =
+            count > 30
+                ? 550
+                : 430;
+
+        return {
+            id: node.id,
+            type: "graphNode",
+            position: {
+                x:
+                    Math.cos(angle) *
+                    radius +
+                    650,
+                y:
+                    Math.sin(angle) *
+                    radius +
+                    400,
+            },
+            data: {
+                id: node.id,
+                label: node.label,
+                type: node.type,
+            },
+        };
+    });
+}
+
+
+function convertEdges(
+    edges: GraphEdge[],
+): Edge[] {
+    return edges.map((edge) => ({
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+        label: edge.relationship,
+        animated: false,
+        style: {
+            strokeWidth: 1.5,
+        },
+        labelStyle: {
+            fill: "#94a3b8",
+            fontSize: 9,
+        },
+        labelBgStyle: {
+            fill: "#080b12",
+            fillOpacity: 0.85,
+        },
+    }));
+}
+
 
 export default function NetworkPage() {
-    const [mainGraph, setMainGraph] =
-        useState<NetworkResponse | null>(null);
-
-    const [focusedGraph, setFocusedGraph] =
-        useState<FocusResponse | null>(null);
-
-    const [selectedNode, setSelectedNode] =
-        useState<GraphNode | null>(null);
-
-    const [selectedEdge, setSelectedEdge] =
-        useState<GraphEdge | null>(null);
-
-    const [history, setHistory] =
-        useState<HistoryItem[]>([]);
+    const [graph, setGraph] =
+        useState<NetworkResponse["network"] | null>(null);
 
     const [loading, setLoading] =
         useState(true);
 
-    const [focusLoading, setFocusLoading] =
-        useState(false);
+    const [error, setError] =
+        useState<string | null>(null);
+
+    const [selectedNode, setSelectedNode] =
+        useState<GraphNode | null>(null);
 
     const [search, setSearch] =
         useState("");
 
-    // ==========================================================
-    // MASTER GRAPH
-    // ==========================================================
+    const [subgraphLoading, setSubgraphLoading] =
+        useState(false);
 
-    async function loadMainGraph() {
+    const [history, setHistory] =
+        useState<GraphNode[]>([]);
+
+
+    async function loadGraph() {
         try {
             setLoading(true);
+            setError(null);
 
             const response = await fetch(
                 `${API_BASE_URL}/network?case_id=${encodeURIComponent(
-                    CASE_ID
+                    CASE_ID,
                 )}`,
                 {
                     cache: "no-store",
-                }
+                },
             );
 
             if (!response.ok) {
                 throw new Error(
-                    `Network request failed: ${response.status}`
+                    await response.text(),
                 );
             }
 
             const data: NetworkResponse =
                 await response.json();
 
-            setMainGraph(data);
-        } catch (error) {
-            console.error(
-                "Network loading failed:",
-                error
+            setGraph(data.network);
+
+        } catch (err) {
+            setError(
+                err instanceof Error
+                    ? err.message
+                    : "Failed to load network",
             );
         } finally {
             setLoading(false);
         }
     }
 
-    // ==========================================================
-    // ENTITY GRAPH
-    // ==========================================================
 
-    async function loadEntityGraph(
+    async function selectNode(
         node: GraphNode,
-        addHistory = true
     ) {
         try {
-            setFocusLoading(true);
-
             setSelectedNode(node);
-            setSelectedEdge(null);
+            setSubgraphLoading(true);
+            setError(null);
+
+            setHistory((previous) => [
+                ...previous,
+                node,
+            ]);
 
             const response = await fetch(
                 `${API_BASE_URL}/network/entity/${encodeURIComponent(
-                    node.id
-                )}?limit=6`,
+                    node.id,
+                )}?case_id=${encodeURIComponent(
+                    CASE_ID,
+                )}`,
                 {
                     cache: "no-store",
-                }
+                },
             );
 
             if (!response.ok) {
+                const text =
+                    await response.text();
+
                 throw new Error(
-                    `Entity request failed: ${response.status}`
+                    `Entity request failed (${response.status}): ${text}`,
                 );
             }
 
-            const data: FocusResponse =
+            const data: NetworkResponse =
                 await response.json();
 
-            if (
-                addHistory &&
-                focusedGraph &&
-                selectedNode
-            ) {
-                setHistory((previous) => [
-                    ...previous,
-                    {
-                        node: selectedNode,
-                        graph: focusedGraph,
-                    },
-                ]);
-            }
+            setGraph(data.network);
 
-            setFocusedGraph(data);
-        } catch (error) {
-            console.error(
-                "Entity graph loading failed:",
-                error
+        } catch (err) {
+            setError(
+                err instanceof Error
+                    ? err.message
+                    : "Failed to load subgraph",
             );
         } finally {
-            setFocusLoading(false);
+            setSubgraphLoading(false);
         }
     }
 
-    // ==========================================================
-    // BACK
-    // ==========================================================
-
-    function goBack() {
-        if (!history.length) {
-            resetGraph();
-            return;
-        }
-
-        const previous =
-            history[history.length - 1];
-
-        setHistory((items) =>
-            items.slice(0, -1)
-        );
-
-        setFocusedGraph(previous.graph);
-        setSelectedNode(previous.node);
-        setSelectedEdge(null);
-    }
-
-    // ==========================================================
-    // RESET
-    // ==========================================================
 
     function resetGraph() {
-        setFocusedGraph(null);
         setSelectedNode(null);
-        setSelectedEdge(null);
         setHistory([]);
+        loadGraph();
     }
 
-    // ==========================================================
-    // INITIAL LOAD
-    // ==========================================================
 
     useEffect(() => {
-        loadMainGraph();
+        loadGraph();
     }, []);
 
-    // ==========================================================
-    // SEARCH
-    // ==========================================================
 
     const filteredNodes = useMemo(() => {
-        if (!mainGraph?.nodes) {
+        if (!graph) {
             return [];
         }
 
-        const query =
-            search.toLowerCase().trim();
-
-        if (!query) {
-            return mainGraph.nodes;
+        if (!search.trim()) {
+            return graph.nodes;
         }
 
-        return mainGraph.nodes.filter(
+        const value =
+            search.toLowerCase();
+
+        return graph.nodes.filter(
             (node) =>
                 node.label
-                    ?.toLowerCase()
-                    .includes(query) ||
+                    .toLowerCase()
+                    .includes(value) ||
                 node.id
-                    ?.toLowerCase()
-                    .includes(query) ||
+                    .toLowerCase()
+                    .includes(value) ||
                 node.type
-                    ?.toLowerCase()
-                    .includes(query)
+                    .toLowerCase()
+                    .includes(value),
         );
-    }, [mainGraph, search]);
+    }, [graph, search]);
 
-    // ==========================================================
-    // LOADING
-    // ==========================================================
 
-    if (loading) {
-        return (
-            <div className="flex min-h-screen items-center justify-center bg-[#05070b]">
-                <div className="text-center">
-
-                    <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-2 border-cyan-400/20 border-t-cyan-400" />
-
-                    <p className="text-sm text-white/50">
-                        Loading investigation network...
-                    </p>
-
-                </div>
-            </div>
+    const flowNodes =
+        useMemo(
+            () =>
+                convertNodes(
+                    filteredNodes,
+                ),
+            [filteredNodes],
         );
-    }
 
-    // ==========================================================
-    // PAGE
-    // ==========================================================
+
+    const visibleIds =
+        new Set(
+            filteredNodes.map(
+                (node) => node.id,
+            ),
+        );
+
+
+    const flowEdges =
+        useMemo(
+            () =>
+                convertEdges(
+                    graph?.edges.filter(
+                        (edge) =>
+                            visibleIds.has(
+                                edge.source,
+                            ) &&
+                            visibleIds.has(
+                                edge.target,
+                            ),
+                    ) || [],
+                ),
+            [graph, filteredNodes],
+        );
+
 
     return (
         <div className="min-h-screen bg-[#05070b] text-white">
 
-            {/* HEADER */}
+            <div className="border-b border-white/10 bg-[#080b12]/95 px-8 py-6">
 
-            <div className="border-b border-white/10 bg-[#080b12]">
-
-                <div className="flex items-center justify-between px-8 py-6">
+                <div className="flex items-center justify-between">
 
                     <div>
-
-                        <div className="mb-2 flex items-center gap-3">
-
-                            <Network
+                        <div className="flex items-center gap-3">
+                            <NetworkIcon
+                                size={22}
                                 className="text-cyan-400"
-                                size={24}
                             />
 
                             <h1 className="text-2xl font-bold">
-                                Network Intelligence
+                                Investigation Network
                             </h1>
-
                         </div>
 
-                        <p className="text-sm text-white/40">
-                            Evidence-linked temporal investigation
-                            network
+                        <p className="mt-1 text-sm text-white/40">
+                            Backend-powered temporal evidence graph
                         </p>
-
                     </div>
 
                     <div className="flex items-center gap-3">
 
-                        {focusedGraph && (
-                            <button
-                                onClick={
-                                    history.length
-                                        ? goBack
-                                        : resetGraph
-                                }
-                                className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-4 py-2 text-sm text-white/60 transition hover:bg-white/[0.08] hover:text-white"
-                            >
-                                <ChevronLeft size={16} />
+                        <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
 
-                                {history.length
-                                    ? "Previous"
-                                    : "Full Network"}
-                            </button>
-                        )}
+                            <Search
+                                size={15}
+                                className="text-white/30"
+                            />
+
+                            <input
+                                value={search}
+                                onChange={(event) =>
+                                    setSearch(
+                                        event.target.value,
+                                    )
+                                }
+                                placeholder="Search entity..."
+                                className="w-48 bg-transparent text-sm outline-none placeholder:text-white/20"
+                            />
+
+                            {search && (
+                                <button
+                                    onClick={() =>
+                                        setSearch("")
+                                    }
+                                >
+                                    <X
+                                        size={14}
+                                        className="text-white/30"
+                                    />
+                                </button>
+                            )}
+
+                        </div>
 
                         <button
-                            onClick={loadMainGraph}
-                            className="rounded-lg border border-white/10 bg-white/[0.04] p-2 text-white/50 transition hover:bg-white/[0.08] hover:text-white"
+                            onClick={resetGraph}
+                            className="rounded-xl border border-white/10 bg-white/[0.03] p-3 transition hover:bg-white/[0.08]"
                         >
-                            <RotateCcw size={17} />
+                            <RefreshCw
+                                size={17}
+                            />
                         </button>
 
                     </div>
-
                 </div>
 
-            </div>
 
-            {/* CONTENT */}
+                <div className="mt-5 flex items-center gap-3 text-xs">
 
-            <div className="p-8">
-
-                {focusedGraph ? (
-                    <FocusedNetwork
-                        graph={focusedGraph}
-                        selectedNode={selectedNode}
-                        selectedEdge={selectedEdge}
-                        loading={focusLoading}
-                        history={history}
-                        onNodeClick={(node) =>
-                            loadEntityGraph(node)
-                        }
-                        onEdgeClick={(edge) =>
-                            setSelectedEdge(edge)
-                        }
-                    />
-                ) : (
-                    <MasterNetwork
-                        nodes={filteredNodes}
-                        edges={mainGraph?.edges || []}
-                        search={search}
-                        setSearch={setSearch}
-                        onNodeClick={loadEntityGraph}
-                    />
-                )}
-
-            </div>
-
-        </div>
-    );
-}
-
-
-// ============================================================
-// MASTER NETWORK
-// ============================================================
-
-function MasterNetwork({
-    nodes,
-    edges,
-    search,
-    setSearch,
-    onNodeClick,
-}: {
-    nodes: GraphNode[];
-    edges: GraphEdge[];
-    search: string;
-    setSearch: (value: string) => void;
-    onNodeClick: (node: GraphNode) => void;
-}) {
-    const groups = {
-        People: nodes.filter(
-            (node) =>
-                node.type?.toLowerCase() ===
-                "person"
-        ),
-
-        Phones: nodes.filter(
-            (node) =>
-                node.type?.toLowerCase() ===
-                "phone"
-        ),
-
-        Vehicles: nodes.filter(
-            (node) =>
-                node.type?.toLowerCase() ===
-                "vehicle"
-        ),
-
-        Locations: nodes.filter(
-            (node) =>
-                node.type?.toLowerCase() ===
-                "location"
-        ),
-
-        Accounts: nodes.filter(
-            (node) =>
-                node.type?.toLowerCase() ===
-                "account"
-        ),
-
-        Organizations: nodes.filter(
-            (node) =>
-                node.type?.toLowerCase() ===
-                "organization"
-        ),
-
-        Other: nodes.filter((node) => {
-            const type =
-                node.type?.toLowerCase();
-
-            return ![
-                "person",
-                "phone",
-                "vehicle",
-                "location",
-                "account",
-                "organization",
-            ].includes(type);
-        }),
-    };
-
-    return (
-        <div>
-
-            {/* TOP */}
-
-            <div className="mb-6 flex items-center justify-between">
-
-                <div>
-
-                    <h2 className="text-lg font-semibold">
-                        Investigation Network
-                    </h2>
-
-                    <p className="mt-1 text-xs text-white/35">
-                        Select an entity to inspect its local
-                        network
-                    </p>
-
-                </div>
-
-                <div className="flex items-center gap-3">
-
-                    <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
-
-                        <Search
-                            size={15}
-                            className="text-white/30"
-                        />
-
-                        <input
-                            value={search}
-                            onChange={(e) =>
-                                setSearch(e.target.value)
-                            }
-                            placeholder="Search entity..."
-                            className="w-52 bg-transparent text-sm text-white outline-none placeholder:text-white/25"
-                        />
-
-                    </div>
-
-                    <div className="rounded-lg border border-cyan-400/20 bg-cyan-400/[0.05] px-3 py-2 text-xs text-cyan-300">
-                        {nodes.length} entities
-                    </div>
-
-                </div>
-
-            </div>
-
-            {/* GROUPS */}
-
-            <div className="space-y-8">
-
-                {Object.entries(groups).map(
-                    ([group, groupNodes]) => {
-
-                        if (!groupNodes.length) {
-                            return null;
-                        }
-
-                        return (
-                            <div key={group}>
-
-                                <div className="mb-3 flex items-center gap-3">
-
-                                    <h3 className="text-sm font-semibold text-white/70">
-                                        {group}
-                                    </h3>
-
-                                    <span className="rounded-full bg-white/[0.06] px-2 py-0.5 text-[10px] text-white/30">
-                                        {groupNodes.length}
-                                    </span>
-
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-6">
-
-                                    {groupNodes.map((node) => {
-
-                                        const connections =
-                                            edges.filter(
-                                                (edge) =>
-                                                    edge.source === node.id ||
-                                                    edge.target === node.id
-                                            ).length;
-
-                                        return (
-                                            <button
-                                                key={node.id}
-                                                onClick={() =>
-                                                    onNodeClick(node)
-                                                }
-                                                className="group rounded-xl border border-white/10 bg-[#0a0e16] p-4 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-cyan-400/40 hover:bg-cyan-400/[0.04]"
-                                            >
-
-                                                <div className="mb-3 flex items-center justify-between">
-
-                                                    <div className="h-2.5 w-2.5 rounded-full bg-cyan-400 shadow-[0_0_12px_rgba(34,211,238,0.65)]" />
-
-                                                    <span className="text-[10px] text-white/25">
-                                                        {connections} links
-                                                    </span>
-
-                                                </div>
-
-                                                <div className="truncate text-sm font-medium text-white/80 group-hover:text-cyan-300">
-                                                    {node.label}
-                                                </div>
-
-                                                <div className="mt-1 truncate text-[10px] text-white/25">
-                                                    {node.id}
-                                                </div>
-
-                                            </button>
-                                        );
-                                    })}
-
-                                </div>
-
-                            </div>
-                        );
-                    }
-                )}
-
-            </div>
-
-        </div>
-    );
-}
-
-
-// ============================================================
-// FOCUSED NETWORK
-// ============================================================
-
-function FocusedNetwork({
-    graph,
-    selectedNode,
-    selectedEdge,
-    loading,
-    history,
-    onNodeClick,
-    onEdgeClick,
-}: {
-    graph: FocusResponse;
-    selectedNode: GraphNode | null;
-    selectedEdge: GraphEdge | null;
-    loading: boolean;
-    history: HistoryItem[];
-    onNodeClick: (node: GraphNode) => void;
-    onEdgeClick: (edge: GraphEdge) => void;
-}) {
-    const center =
-        selectedNode ||
-        graph.selected_entity;
-
-    const neighbors =
-        graph.nodes.filter(
-            (node) =>
-                node.id !== center.id
-        );
-
-    return (
-        <div>
-
-            {/* ======================================================
-          FOCUS HEADER
-      ====================================================== */}
-
-            <div className="mb-5">
-
-                <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-white/25">
-
-                    <span>Master Network</span>
-
-                    {history.map((item) => (
-                        <span key={item.node.id}>
-                            <ArrowRight
-                                size={10}
-                                className="mx-1 inline"
-                            />
-
-                            {item.node.label}
-                        </span>
-                    ))}
-
-                    <ArrowRight
-                        size={10}
-                        className="mx-1 inline"
-                    />
-
-                    <span className="text-cyan-400">
-                        {center.label}
+                    <span className="rounded-lg bg-cyan-500/10 px-3 py-1.5 text-cyan-400">
+                        FIR-101-2025
                     </span>
 
-                </div>
+                    {selectedNode && (
+                        <>
+                            <span className="text-white/20">
+                                /
+                            </span>
 
-            </div>
+                            <span className="rounded-lg bg-white/[0.05] px-3 py-1.5 text-white/60">
+                                {selectedNode.label}
+                            </span>
+                        </>
+                    )}
 
-            <div className="mb-6 flex items-center justify-between">
-
-                <div>
-
-                    <div className="mb-2 flex items-center gap-3">
-
-                        <div className="h-3 w-3 rounded-full bg-cyan-400 shadow-[0_0_15px_rgba(34,211,238,0.8)]" />
-
-                        <h2 className="text-xl font-semibold">
-                            {center.label}
-                        </h2>
-
-                        <span className="rounded-md border border-cyan-400/20 bg-cyan-400/[0.05] px-2 py-1 text-[10px] uppercase tracking-wider text-cyan-300">
-                            {center.type}
+                    {subgraphLoading && (
+                        <span className="text-cyan-400">
+                            Loading subgraph...
                         </span>
-
-                    </div>
-
-                    <p className="text-xs text-white/35">
-                        Focused local network ·{" "}
-                        {graph.connection_count} connected
-                        entities
-                    </p>
-
-                </div>
-
-                {loading && (
-                    <div className="flex items-center gap-2 text-xs text-cyan-300">
-
-                        <div className="h-3 w-3 animate-spin rounded-full border border-cyan-400/30 border-t-cyan-400" />
-
-                        Updating network...
-
-                    </div>
-                )}
-
-            </div>
-
-            {/* ======================================================
-          MAIN AREA
-      ====================================================== */}
-
-            <div className="grid grid-cols-1 gap-5 xl:grid-cols-[1fr_330px]">
-
-                {/* GRAPH */}
-
-                <div className="relative h-[620px] overflow-hidden rounded-2xl border border-white/10 bg-[#080b12]">
-
-                    {/* GRID */}
-
-                    <div
-                        className="absolute inset-0 opacity-20"
-                        style={{
-                            backgroundImage:
-                                "linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px)",
-                            backgroundSize:
-                                "40px 40px",
-                        }}
-                    />
-
-                    {/* CENTER */}
-
-                    <div className="absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2">
-
-                        <div className="relative">
-
-                            <div className="absolute inset-0 animate-pulse rounded-full bg-cyan-400/20 blur-xl" />
-
-                            <div className="relative flex h-28 w-28 flex-col items-center justify-center rounded-full border-2 border-cyan-400 bg-[#07141b] shadow-[0_0_35px_rgba(34,211,238,0.35)]">
-
-                                <div className="mb-2 h-3 w-3 rounded-full bg-cyan-300 shadow-[0_0_12px_rgba(34,211,238,1)]" />
-
-                                <span className="max-w-20 truncate text-sm font-semibold text-white">
-                                    {center.label}
-                                </span>
-
-                                <span className="mt-1 text-[9px] uppercase tracking-wider text-cyan-300/70">
-                                    {center.type}
-                                </span>
-
-                            </div>
-
-                        </div>
-
-                    </div>
-
-                    {/* CONNECTIONS */}
-
-                    {neighbors.map(
-                        (node, index) => {
-
-                            const angle =
-                                (index /
-                                    Math.max(
-                                        neighbors.length,
-                                        1
-                                    )) *
-                                Math.PI *
-                                2 -
-                                Math.PI / 2;
-
-                            const radius = 215;
-
-                            const x =
-                                Math.cos(angle) *
-                                radius;
-
-                            const y =
-                                Math.sin(angle) *
-                                radius;
-
-                            const relationship =
-                                graph.edges.find(
-                                    (edge) =>
-                                        (edge.source ===
-                                            center.id &&
-                                            edge.target ===
-                                            node.id) ||
-                                        (edge.target ===
-                                            center.id &&
-                                            edge.source ===
-                                            node.id)
-                                );
-
-                            return (
-                                <div
-                                    key={node.id}
-                                    className="absolute left-1/2 top-1/2"
-                                    style={{
-                                        transform:
-                                            `translate(calc(-50% + ${x}px), calc(-50% + ${y}px))`,
-                                    }}
-                                >
-
-                                    {/* LINE */}
-
-                                    <div
-                                        className="pointer-events-none absolute left-1/2 top-1/2 h-px origin-left bg-cyan-400/20"
-                                        style={{
-                                            width: `${radius}px`,
-                                            transform:
-                                                `rotate(${Math.atan2(
-                                                    -y,
-                                                    -x
-                                                )}rad)`,
-                                        }}
-                                    />
-
-                                    {/* RELATIONSHIP */}
-
-                                    {relationship && (
-                                        <button
-                                            onClick={(event) => {
-                                                event.stopPropagation();
-                                                onEdgeClick(
-                                                    relationship
-                                                );
-                                            }}
-                                            className="absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-md border border-white/10 bg-[#080b12]/90 px-2 py-1 text-[8px] uppercase tracking-wider text-white/35 backdrop-blur transition hover:border-cyan-400/40 hover:text-cyan-300"
-                                        >
-                                            {relationship.relationship}
-                                        </button>
-                                    )}
-
-                                    {/* NODE */}
-
-                                    <button
-                                        onClick={() =>
-                                            onNodeClick(node)
-                                        }
-                                        className="group relative z-20 flex h-24 w-24 flex-col items-center justify-center rounded-full border border-white/15 bg-[#0c111b] shadow-xl transition-all duration-200 hover:scale-110 hover:border-cyan-400/60 hover:shadow-[0_0_25px_rgba(34,211,238,0.2)]"
-                                    >
-
-                                        <div className="mb-1 h-2.5 w-2.5 rounded-full bg-white/50 transition group-hover:bg-cyan-400 group-hover:shadow-[0_0_10px_rgba(34,211,238,0.8)]" />
-
-                                        <span className="max-w-16 truncate text-xs font-medium text-white/80 group-hover:text-cyan-300">
-                                            {node.label}
-                                        </span>
-
-                                        <span className="mt-1 max-w-16 truncate text-[8px] uppercase tracking-wider text-white/25">
-                                            {node.type}
-                                        </span>
-
-                                    </button>
-
-                                </div>
-                            );
-                        }
                     )}
 
-                    {/* EMPTY */}
-
-                    {!neighbors.length && (
-                        <div className="absolute inset-0 flex items-center justify-center">
-
-                            <div className="rounded-xl border border-white/10 bg-black/20 px-6 py-4 text-sm text-white/40">
-                                No connected entities found.
-                            </div>
-
-                        </div>
-                    )}
-
-                    {/* LEGEND */}
-
-                    <div className="absolute bottom-5 left-5 rounded-xl border border-white/10 bg-[#080b12]/90 p-4 backdrop-blur">
-
-                        <div className="mb-2 flex items-center gap-2">
-
-                            <Database
-                                size={14}
-                                className="text-cyan-400"
-                            />
-
-                            <span className="text-xs font-semibold text-white/70">
-                                Local Network
-                            </span>
-
-                        </div>
-
-                        <p className="text-[10px] text-white/30">
-                            Selected entity + up to 6 direct
-                            connections
-                        </p>
-
-                    </div>
-
-                </div>
-
-                {/* ====================================================
-            RIGHT INVESTIGATION PANEL
-            ==================================================== */}
-
-                <div className="space-y-4">
-
-                    {/* ENTITY */}
-
-                    <div className="rounded-2xl border border-white/10 bg-[#080b12] p-5">
-
-                        <div className="mb-4 flex items-center gap-2">
-
-                            <div className="h-2.5 w-2.5 rounded-full bg-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.7)]" />
-
-                            <span className="text-xs font-semibold uppercase tracking-wider text-white/50">
-                                Selected Entity
-                            </span>
-
-                        </div>
-
-                        <div className="text-lg font-semibold text-white">
-                            {center.label}
-                        </div>
-
-                        <div className="mt-1 break-all text-[10px] text-white/25">
-                            {center.id}
-                        </div>
-
-                        <div className="mt-4 grid grid-cols-2 gap-2">
-
-                            <SmallStat
-                                title="Type"
-                                value={center.type}
-                            />
-
-                            <SmallStat
-                                title="Connections"
-                                value={String(
-                                    graph.connection_count
-                                )}
-                            />
-
-                        </div>
-
-                    </div>
-
-                    {/* RELATIONSHIP */}
-
-                    {selectedEdge ? (
-                        <RelationshipPanel
-                            edge={selectedEdge}
-                            center={center}
-                        />
-                    ) : (
-                        <div className="rounded-2xl border border-white/10 bg-[#080b12] p-5">
-
-                            <div className="mb-3 flex items-center gap-2">
-
-                                <Network
-                                    size={14}
-                                    className="text-cyan-400"
-                                />
-
-                                <span className="text-xs font-semibold uppercase tracking-wider text-white/50">
-                                    Relationship
-                                </span>
-
-                            </div>
-
-                            <p className="text-xs leading-5 text-white/30">
-                                Click a relationship label in the
-                                graph to inspect how the entities are
-                                connected.
-                            </p>
-
-                        </div>
-                    )}
-
-                    {/* SOURCE */}
-
-                    <div className="rounded-2xl border border-white/10 bg-[#080b12] p-5">
-
-                        <div className="mb-3 flex items-center gap-2">
-
-                            <Database
-                                size={14}
-                                className="text-cyan-400"
-                            />
-
-                            <span className="text-xs font-semibold uppercase tracking-wider text-white/50">
-                                Source Layer
-                            </span>
-
-                        </div>
-
-                        <div className="rounded-lg border border-white/5 bg-white/[0.02] px-3 py-2 text-xs text-white/50">
-                            {center.source_layer ||
-                                "Master Graph"}
-                        </div>
-
-                    </div>
-
                 </div>
 
             </div>
 
-        </div>
-    );
-}
 
-
-// ============================================================
-// RELATIONSHIP PANEL
-// ============================================================
-
-function RelationshipPanel({
-    edge,
-    center,
-}: {
-    edge: GraphEdge;
-    center: GraphNode;
-}) {
-    const properties =
-        edge.properties || {};
-
-    return (
-        <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/[0.025] p-5">
-
-            <div className="mb-4 flex items-center justify-between">
-
-                <div className="flex items-center gap-2">
-
-                    <ArrowRight
-                        size={15}
-                        className="text-cyan-400"
-                    />
-
-                    <span className="text-xs font-semibold uppercase tracking-wider text-cyan-300">
-                        Relationship
-                    </span>
-
+            {error && (
+                <div className="mx-8 mt-5 rounded-xl border border-red-500/20 bg-red-500/10 px-5 py-4 text-sm text-red-300">
+                    {error}
                 </div>
-
-                <ExternalLink
-                    size={13}
-                    className="text-white/20"
-                />
-
-            </div>
-
-            <div className="mb-4 rounded-lg border border-white/10 bg-[#080b12] p-3">
-
-                <div className="text-sm font-semibold text-white">
-                    {edge.relationship}
-                </div>
-
-                <div className="mt-1 text-[10px] text-white/30">
-                    {center.label}
-                    {" → "}
-                    {edge.target === center.id
-                        ? edge.source
-                        : edge.target}
-                </div>
-
-            </div>
-
-            <div className="mb-2 text-[10px] uppercase tracking-wider text-white/25">
-                Relationship Properties
-            </div>
-
-            {Object.keys(properties).length ? (
-                <div className="space-y-2">
-
-                    {Object.entries(
-                        properties
-                    ).map(([key, value]) => (
-
-                        <div
-                            key={key}
-                            className="rounded-lg border border-white/5 bg-white/[0.02] p-2"
-                        >
-
-                            <div className="text-[9px] uppercase tracking-wider text-white/25">
-                                {key}
-                            </div>
-
-                            <div className="mt-1 break-all text-[11px] text-white/60">
-                                {String(value)}
-                            </div>
-
-                        </div>
-
-                    ))}
-
-                </div>
-            ) : (
-                <p className="text-xs text-white/30">
-                    No additional relationship properties
-                    available.
-                </p>
             )}
 
-        </div>
-    );
-}
+
+            <div className="grid grid-cols-[1fr_300px] gap-0">
+
+                <div
+                    className="relative h-[calc(100vh-150px)]"
+                    style={{
+                        background:
+                            "radial-gradient(circle at center, rgba(8,145,178,0.08), transparent 45%)",
+                    }}
+                >
+
+                    {loading ? (
+                        <div className="flex h-full items-center justify-center">
+                            <div className="text-sm text-white/40">
+                                Loading investigation graph...
+                            </div>
+                        </div>
+                    ) : (
+                        <ReactFlow
+                            nodes={flowNodes}
+                            edges={flowEdges}
+                            nodeTypes={nodeTypes}
+                            fitView
+                            fitViewOptions={{
+                                padding: 0.25,
+                            }}
+                            onNodeClick={(
+                                _event,
+                                node,
+                            ) => {
+                                const sourceNode =
+                                    graph?.nodes.find(
+                                        (item) =>
+                                            item.id ===
+                                            node.id,
+                                    );
+
+                                if (
+                                    sourceNode
+                                ) {
+                                    selectNode(
+                                        sourceNode,
+                                    );
+                                }
+                            }}
+                        >
+                            <Background
+                                gap={24}
+                                size={1}
+                            />
+
+                            <Controls />
+
+                            <MiniMap
+                                nodeColor={(node) => {
+                                    const type =
+                                        String(
+                                            node.data
+                                                ?.type ||
+                                            "",
+                                        );
+
+                                    if (
+                                        type ===
+                                        "Person"
+                                    ) {
+                                        return "#22d3ee";
+                                    }
+
+                                    if (
+                                        type ===
+                                        "Case"
+                                    ) {
+                                        return "#ef4444";
+                                    }
+
+                                    if (
+                                        type ===
+                                        "Evidence"
+                                    ) {
+                                        return "#64748b";
+                                    }
+
+                                    return "#8b5cf6";
+                                }}
+                            />
+                        </ReactFlow>
+                    )}
+
+                </div>
 
 
-// ============================================================
-// SMALL STAT
-// ============================================================
+                <aside className="border-l border-white/10 bg-[#080b12]">
 
-function SmallStat({
-    title,
-    value,
-}: {
-    title: string;
-    value: string;
-}) {
-    return (
-        <div className="rounded-lg border border-white/5 bg-white/[0.02] p-3">
+                    <div className="border-b border-white/10 p-5">
 
-            <div className="text-[9px] uppercase tracking-wider text-white/25">
-                {title}
-            </div>
+                        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-white/30">
+                            Network Statistics
+                        </div>
 
-            <div className="mt-1 truncate text-xs font-medium text-white/70">
-                {value}
+                        <div className="mt-4 grid grid-cols-2 gap-3">
+
+                            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                                <div className="text-2xl font-bold">
+                                    {graph?.nodes.length || 0}
+                                </div>
+
+                                <div className="mt-1 text-xs text-white/30">
+                                    Entities
+                                </div>
+                            </div>
+
+                            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                                <div className="text-2xl font-bold">
+                                    {graph?.edges.length || 0}
+                                </div>
+
+                                <div className="mt-1 text-xs text-white/30">
+                                    Connections
+                                </div>
+                            </div>
+
+                        </div>
+
+                    </div>
+
+
+                    <div className="border-b border-white/10 p-5">
+
+                        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-white/30">
+                            Selected Entity
+                        </div>
+
+                        {selectedNode ? (
+                            <div className="mt-4">
+
+                                <div
+                                    className={`
+                                        inline-flex
+                                        rounded-lg
+                                        border
+                                        px-3
+                                        py-1
+                                        text-[10px]
+                                        font-bold
+                                        uppercase
+                                        tracking-wider
+                                        ${typeStyles[
+                                        selectedNode.type
+                                        ] ||
+                                        "border-white/20"
+                                        }
+                                    `}
+                                >
+                                    {selectedNode.type}
+                                </div>
+
+                                <div className="mt-3 text-lg font-semibold">
+                                    {selectedNode.label}
+                                </div>
+
+                                <div className="mt-1 break-all text-xs text-white/30">
+                                    {selectedNode.id}
+                                </div>
+
+                                <button
+                                    onClick={
+                                        resetGraph
+                                    }
+                                    className="mt-5 w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white/60 transition hover:bg-white/[0.08] hover:text-white"
+                                >
+                                    Back to Investigation Graph
+                                </button>
+
+                            </div>
+                        ) : (
+                            <div className="mt-4 text-sm leading-6 text-white/30">
+                                Select any entity in the graph to load its backend-generated subgraph.
+                            </div>
+                        )}
+
+                    </div>
+
+
+                    <div className="p-5">
+
+                        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-white/30">
+                            Entity Types
+                        </div>
+
+                        <div className="mt-4 space-y-2">
+
+                            {[
+                                "Person",
+                                "Phone",
+                                "Vehicle",
+                                "Location",
+                                "Account",
+                                "Evidence",
+                                "CourtCase",
+                            ].map(
+                                (type) => {
+                                    const count =
+                                        graph?.nodes.filter(
+                                            (node) =>
+                                                node.type ===
+                                                type,
+                                        ).length || 0;
+
+                                    return (
+                                        <div
+                                            key={type}
+                                            className="flex items-center justify-between rounded-lg bg-white/[0.025] px-3 py-2"
+                                        >
+                                            <span className="text-xs text-white/50">
+                                                {type}
+                                            </span>
+
+                                            <span className="text-xs font-semibold text-white/70">
+                                                {count}
+                                            </span>
+                                        </div>
+                                    );
+                                },
+                            )}
+
+                        </div>
+
+                    </div>
+
+                </aside>
+
             </div>
 
         </div>

@@ -1,280 +1,619 @@
 "use client";
 
 import Link from "next/link";
-import { Search, ArrowRight } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
+import {
+    ArrowLeft,
+    ArrowRight,
+    FileText,
+    Network,
+    RefreshCw,
+    Search,
+    Shield,
+} from "lucide-react";
 
-import { getCases, type CaseData } from "@/lib/api";
+import {
+    getCase,
+    getRelevantCases,
+    type CaseData,
+} from "@/lib/api";
+
+
+const SELECTED_FIR_KEY =
+    "criminal-network-selected-fir";
+
 
 export default function CasesPage() {
-    const [cases, setCases] = useState<CaseData[]>([]);
-    const [search, setSearch] = useState("");
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
 
-    // =====================================================
-    // LOAD REAL CASES FROM FASTAPI
-    // =====================================================
+    const [selectedFir, setSelectedFir] =
+        useState("");
+
+    const [selectedCase, setSelectedCase] =
+        useState<CaseData | null>(null);
+
+    const [cases, setCases] =
+        useState<CaseData[]>([]);
+
+    const [search, setSearch] =
+        useState("");
+
+    const [loading, setLoading] =
+        useState(true);
+
+    const [error, setError] =
+        useState("");
+
+
+    // --------------------------------------------------------
+    // LOAD SELECTED FIR
+    // --------------------------------------------------------
 
     useEffect(() => {
-        async function loadCases() {
-            try {
-                setLoading(true);
-                setError(null);
 
-                const data = await getCases();
+        const params =
+            new URLSearchParams(
+                window.location.search
+            );
 
-                setCases(data);
-            } catch (err) {
-                console.error("Failed to load cases:", err);
+        const queryFir =
+            params.get("fir");
 
-                setError(
-                    err instanceof Error
-                        ? err.message
-                        : "Failed to load cases"
-                );
-            } finally {
-                setLoading(false);
-            }
+        const savedFir =
+            window.localStorage.getItem(
+                SELECTED_FIR_KEY
+            );
+
+        const fir =
+            queryFir ||
+            savedFir ||
+            "";
+
+        if (!fir) {
+
+            setLoading(false);
+
+            setError(
+                "No FIR selected. Please select an FIR from the dashboard."
+            );
+
+            return;
         }
 
-        loadCases();
+        setSelectedFir(fir);
+
+        window.localStorage.setItem(
+            SELECTED_FIR_KEY,
+            fir
+        );
+
+        loadRelevantCases(fir);
+
     }, []);
 
-    // =====================================================
-    // SEARCH
-    // =====================================================
 
-    const filteredCases = useMemo(() => {
-        const query = search.toLowerCase().trim();
+    // --------------------------------------------------------
+    // LOAD RELEVANT CASES
+    // --------------------------------------------------------
 
-        if (!query) {
-            return cases;
+    async function loadRelevantCases(
+        fir: string
+    ) {
+
+        try {
+
+            setLoading(true);
+            setError("");
+
+            const [
+                seedCase,
+                relevantCases,
+            ] = await Promise.all([
+                getCase(fir),
+                getRelevantCases(fir),
+            ]);
+
+            setSelectedCase(
+                seedCase
+            );
+
+            setCases(
+                relevantCases
+            );
+
+        } catch (err) {
+
+            console.error(err);
+
+            setError(
+                err instanceof Error
+                    ? err.message
+                    : "Failed to load relevant cases."
+            );
+
+        } finally {
+
+            setLoading(false);
         }
-
-        return cases.filter((item) =>
-            [
-                item.id,
-                item.fir_number,
-                item.case_type,
-                item.police_station,
-                item.status,
-            ]
-                .filter(Boolean)
-                .some((value) =>
-                    String(value).toLowerCase().includes(query)
-                )
-        );
-    }, [search, cases]);
-
-    // =====================================================
-    // FORMAT DATE
-    // =====================================================
-
-    function formatDate(date: string | null) {
-        if (!date) {
-            return "—";
-        }
-
-        return date.split("T")[0];
     }
 
-    // =====================================================
-    // DISPLAY ID
-    // =====================================================
 
-    function displayCaseId(item: CaseData) {
-        if (item.fir_number) {
-            return item.id.replace("case:", "");
-        }
+    // --------------------------------------------------------
+    // FILTER
+    // --------------------------------------------------------
 
-        return item.id.replace("case:", "");
-    }
+    const filteredCases =
+        cases.filter((item) => {
+
+            const value =
+                search
+                    .toLowerCase()
+                    .trim();
+
+            if (!value) {
+                return true;
+            }
+
+            return (
+                item.id
+                    ?.toLowerCase()
+                    .includes(value) ||
+
+                item.fir_number
+                    ?.toLowerCase()
+                    .includes(value) ||
+
+                item.case_type
+                    ?.toLowerCase()
+                    .includes(value) ||
+
+                item.police_station
+                    ?.toLowerCase()
+                    .includes(value) ||
+
+                item.status
+                    ?.toLowerCase()
+                    .includes(value)
+            );
+
+        });
+
+
+    // --------------------------------------------------------
+    // UI
+    // --------------------------------------------------------
 
     return (
-        <div className="min-h-screen bg-[#05070b] text-white">
-            <div className="p-8">
 
-                {/* Header */}
-                <div className="mb-8">
+        <div className="min-h-screen bg-[#05070b] p-8 text-white">
 
-                    <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-400">
-                        Investigation Management
-                    </p>
+            {/* HEADER */}
+
+            <div className="flex items-start justify-between">
+
+                <div>
+
+                    <div className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-400">
+                        Connected Investigations
+                    </div>
 
                     <h1 className="mt-2 text-3xl font-bold">
-                        Cases
+                        Relevant Cases
                     </h1>
 
                     <p className="mt-2 text-sm text-white/40">
-                        Browse and investigate registered cases
+                        Cases connected to the selected FIR through the master investigation graph
                     </p>
 
                 </div>
 
-                {/* Search */}
-                <div className="mb-6 flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-4">
 
-                    <Search
-                        size={18}
-                        className="text-white/30"
-                    />
+                <Link
+                    href="/"
+                    className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white/60 transition hover:bg-white/[0.06] hover:text-white"
+                >
+                    <ArrowLeft size={16} />
+                    Dashboard
+                </Link>
 
-                    <input
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                        placeholder="Search FIR, case type or police station..."
-                        className="h-12 w-full bg-transparent text-sm text-white outline-none placeholder:text-white/25"
-                    />
+            </div>
+
+
+            {/* SELECTED FIR */}
+
+            {selectedCase && (
+
+                <div className="mt-8 rounded-2xl border border-cyan-500/20 bg-cyan-500/[0.04] p-6">
+
+                    <div className="flex items-center justify-between">
+
+                        <div className="flex items-center gap-4">
+
+                            <div className="rounded-xl bg-cyan-500/10 p-3">
+
+                                <Shield
+                                    size={22}
+                                    className="text-cyan-400"
+                                />
+
+                            </div>
+
+
+                            <div>
+
+                                <div className="text-xs uppercase tracking-wider text-cyan-400">
+                                    Investigation Source FIR
+                                </div>
+
+                                <div className="mt-1 text-xl font-bold">
+                                    {selectedCase.fir_number ||
+                                        selectedCase.id}
+                                </div>
+
+                            </div>
+
+                        </div>
+
+
+                        <div className="text-right">
+
+                            <div className="text-2xl font-bold text-cyan-400">
+                                {cases.length}
+                            </div>
+
+                            <div className="text-xs text-white/30">
+                                relevant cases
+                            </div>
+
+                        </div>
+
+                    </div>
 
                 </div>
 
-                {/* Loading */}
-                {loading && (
-                    <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02]">
-                        <div className="px-6 py-12 text-center text-sm text-white/40">
-                            Loading cases...
-                        </div>
+            )}
+
+
+            {/* ERROR */}
+
+            {error && (
+
+                <div className="mt-6 rounded-xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-300">
+                    {error}
+                </div>
+
+            )}
+
+
+            {/* SEARCH */}
+
+            <div className="mt-8 flex items-center justify-between">
+
+                <div>
+
+                    <h2 className="text-lg font-semibold">
+                        Connected Cases
+                    </h2>
+
+                    <p className="mt-1 text-xs text-white/30">
+                        Derived from relationships in Neo4j
+                    </p>
+
+                </div>
+
+
+                <div className="flex items-center gap-3">
+
+                    <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-4">
+
+                        <Search
+                            size={16}
+                            className="text-white/30"
+                        />
+
+                        <input
+                            value={search}
+                            onChange={(event) =>
+                                setSearch(
+                                    event.target.value
+                                )
+                            }
+                            placeholder="Search cases..."
+                            className="w-64 bg-transparent py-3 text-sm text-white outline-none placeholder:text-white/20"
+                        />
+
                     </div>
-                )}
 
-                {/* Error */}
-                {!loading && error && (
-                    <div className="overflow-hidden rounded-2xl border border-red-400/20 bg-red-400/5">
-                        <div className="px-6 py-12 text-center">
 
-                            <p className="text-sm text-red-400">
-                                Failed to load cases
-                            </p>
+                    <button
+                        onClick={() =>
+                            selectedFir &&
+                            loadRelevantCases(
+                                selectedFir
+                            )
+                        }
+                        className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-white/40 transition hover:bg-white/[0.06] hover:text-white"
+                    >
 
-                            <p className="mt-2 text-xs text-white/30">
-                                {error}
-                            </p>
+                        <RefreshCw
+                            size={16}
+                        />
 
-                        </div>
+                    </button>
+
+                </div>
+
+            </div>
+
+
+            {/* CONTENT */}
+
+            <div className="mt-5">
+
+                {loading ? (
+
+                    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-16 text-center">
+
+                        <RefreshCw
+                            size={22}
+                            className="mx-auto animate-spin text-cyan-400"
+                        />
+
+                        <p className="mt-4 text-sm text-white/30">
+                            Finding relevant cases from the master graph...
+                        </p>
+
                     </div>
-                )}
 
-                {/* Cases */}
-                {!loading && !error && (
-                    <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02]">
+                ) : filteredCases.length === 0 ? (
 
-                        <div className="overflow-x-auto">
+                    <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] p-16 text-center">
 
-                            <table className="w-full text-left">
+                        <Network
+                            size={36}
+                            className="mx-auto text-white/20"
+                        />
 
-                                <thead className="border-b border-white/10 bg-white/[0.03]">
+                        <h3 className="mt-4 font-semibold">
+                            No relevant cases found
+                        </h3>
 
-                                    <tr className="text-xs uppercase tracking-wider text-white/30">
+                        <p className="mt-2 text-sm text-white/30">
+                            No other case is currently connected to the selected FIR through shared investigative entities.
+                        </p>
 
-                                        <th className="px-6 py-4">
-                                            FIR Number
-                                        </th>
+                    </div>
 
-                                        <th className="px-6 py-4">
-                                            Case Type
-                                        </th>
+                ) : (
 
-                                        <th className="px-6 py-4">
-                                            Police Station
-                                        </th>
+                    <div className="grid grid-cols-2 gap-5">
 
-                                        <th className="px-6 py-4">
-                                            Incident Date
-                                        </th>
+                        {filteredCases.map(
+                            (caseData) => (
 
-                                        <th className="px-6 py-4">
-                                            Status
-                                        </th>
+                                <CaseCard
+                                    key={caseData.id}
+                                    caseData={caseData}
+                                    sourceFir={selectedFir}
+                                />
 
-                                        <th className="px-6 py-4">
-                                            Action
-                                        </th>
-
-                                    </tr>
-
-                                </thead>
-
-                                <tbody>
-
-                                    {filteredCases.map((item) => (
-
-                                        <tr
-                                            key={item.id}
-                                            className="border-b border-white/5 transition-colors hover:bg-white/[0.03]"
-                                        >
-
-                                            <td className="px-6 py-5">
-
-                                                <span className="font-medium text-cyan-400">
-                                                    {displayCaseId(item)}
-                                                </span>
-
-                                            </td>
-
-                                            <td className="px-6 py-5 text-sm text-white/70">
-                                                {item.case_type || "—"}
-                                            </td>
-
-                                            <td className="px-6 py-5 text-sm text-white/50">
-                                                {item.police_station || "—"}
-                                            </td>
-
-                                            <td className="px-6 py-5 text-sm text-white/50">
-                                                {formatDate(item.incident_date)}
-                                            </td>
-
-                                            <td className="px-6 py-5">
-
-                                                <span
-                                                    className={`rounded-full px-3 py-1 text-xs font-medium ${item.status === "ACTIVE"
-                                                        ? "bg-emerald-400/10 text-emerald-400"
-                                                        : item.status === "ONGOING"
-                                                            ? "bg-cyan-400/10 text-cyan-400"
-                                                            : "bg-white/10 text-white/40"
-                                                        }`}
-                                                >
-                                                    {item.status || "UNKNOWN"}
-                                                </span>
-
-                                            </td>
-
-                                            <td className="px-6 py-5">
-
-                                                <Link
-                                                    href={`/analysis?case=${encodeURIComponent(
-                                                        item.id
-                                                    )}`}
-                                                    className="inline-flex items-center gap-2 rounded-lg border border-cyan-400/20 bg-cyan-400/5 px-3 py-2 text-xs font-medium text-cyan-400 transition hover:bg-cyan-400/10"
-                                                >
-                                                    Analyze
-
-                                                    <ArrowRight size={14} />
-
-                                                </Link>
-
-                                            </td>
-
-                                        </tr>
-
-                                    ))}
-
-                                </tbody>
-
-                            </table>
-
-                        </div>
-
-                        {filteredCases.length === 0 && (
-                            <div className="px-6 py-12 text-center text-sm text-white/30">
-                                No cases found.
-                            </div>
+                            )
                         )}
 
                     </div>
+
                 )}
 
             </div>
+
         </div>
     );
+}
+
+
+// ============================================================
+// CASE CARD
+// ============================================================
+
+function CaseCard({
+    caseData,
+    sourceFir,
+}: {
+    caseData: CaseData;
+    sourceFir: string;
+}) {
+
+    return (
+
+        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 transition hover:border-cyan-500/20 hover:bg-white/[0.045]">
+
+            <div className="flex items-start justify-between">
+
+                <div className="flex items-start gap-4">
+
+                    <div className="rounded-xl bg-cyan-500/10 p-3">
+
+                        <FileText
+                            size={21}
+                            className="text-cyan-400"
+                        />
+
+                    </div>
+
+
+                    <div>
+
+                        <div className="text-lg font-semibold">
+                            {caseData.fir_number ||
+                                caseData.id}
+                        </div>
+
+                        <div className="mt-1 text-xs text-white/30">
+                            {caseData.id}
+                        </div>
+
+                    </div>
+
+                </div>
+
+
+                <span
+                    className={`rounded-full px-3 py-1 text-[10px] font-semibold uppercase tracking-wider ${caseData.status === "ACTIVE"
+                            ? "bg-emerald-500/10 text-emerald-400"
+                            : "bg-white/10 text-white/40"
+                        }`}
+                >
+                    {caseData.status ||
+                        "UNKNOWN"}
+                </span>
+
+            </div>
+
+
+            {/* DETAILS */}
+
+            <div className="mt-6 grid grid-cols-2 gap-4">
+
+                <Detail
+                    label="Case Type"
+                    value={
+                        caseData.case_type ||
+                        "—"
+                    }
+                />
+
+                <Detail
+                    label="Police Station"
+                    value={
+                        caseData.police_station ||
+                        "—"
+                    }
+                />
+
+                <Detail
+                    label="Evidence"
+                    value={String(
+                        caseData.evidence_count
+                    )}
+                />
+
+                <Detail
+                    label="Relationships"
+                    value={String(
+                        caseData.relationship_count
+                    )}
+                />
+
+                <Detail
+                    label="Incident"
+                    value={
+                        formatDate(
+                            caseData.incident_date
+                        )
+                    }
+                />
+
+                <Detail
+                    label="Registered"
+                    value={
+                        formatDate(
+                            caseData.registered_date
+                        )
+                    }
+                />
+
+            </div>
+
+
+            {/* CONNECTION */}
+
+            <div className="mt-5 rounded-xl border border-cyan-500/10 bg-cyan-500/[0.025] p-3">
+
+                <div className="text-[10px] uppercase tracking-wider text-cyan-400">
+                    Graph Connection
+                </div>
+
+                <div className="mt-1 text-xs text-white/40">
+                    Connected to the selected FIR through shared investigative entities.
+                </div>
+
+            </div>
+
+
+            {/* ACTION */}
+
+            <div className="mt-5 flex justify-end">
+
+                <Link
+                    href={`/analysis?case=${encodeURIComponent(
+                        caseData.id
+                    )}&source=${encodeURIComponent(
+                        sourceFir
+                    )}`}
+                    className="flex items-center gap-2 rounded-xl bg-cyan-500 px-5 py-3 text-sm font-semibold text-black transition hover:bg-cyan-400"
+                >
+
+                    Analyse Case
+
+                    <ArrowRight
+                        size={16}
+                    />
+
+                </Link>
+
+            </div>
+
+        </div>
+    );
+}
+
+
+// ============================================================
+// HELPERS
+// ============================================================
+
+function Detail({
+    label,
+    value,
+}: {
+    label: string;
+    value: string;
+}) {
+
+    return (
+
+        <div>
+
+            <div className="text-[10px] uppercase tracking-wider text-white/20">
+                {label}
+            </div>
+
+            <div className="mt-1 truncate text-sm text-white/60">
+                {value}
+            </div>
+
+        </div>
+    );
+}
+
+
+function formatDate(
+    value: string | null
+): string {
+
+    if (!value) {
+        return "—";
+    }
+
+    const date =
+        new Date(value);
+
+    if (
+        Number.isNaN(
+            date.getTime()
+        )
+    ) {
+        return value;
+    }
+
+    return date.toLocaleDateString();
 }
