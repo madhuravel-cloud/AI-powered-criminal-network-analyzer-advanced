@@ -1,0 +1,177 @@
+# ============================================================
+# PYTHON
+# ============================================================
+
+__pycache__/
+*.py[cod]
+*$py.class
+
+*.so
+
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# ============================================================
+# ENVIRONMENT / SECRETS
+# ============================================================
+
+.env
+.env.*
+!.env.example
+
+# ============================================================
+# DATABASE / LOCAL DATA
+# ============================================================
+
+*.db
+*.sqlite
+*.sqlite3
+
+# Local database dumps
+*.sql
+*.dump
+
+# ============================================================
+# MACHINE LEARNING
+# ============================================================
+
+# Trained models can be regenerated
+*.pkl
+*.joblib
+*.h5
+*.keras
+*.pt
+*.pth
+*.onnx
+
+# ML experiment outputs
+mlruns/
+wandb/
+runs/
+
+# ============================================================
+# LOGS
+# ============================================================
+
+*.log
+logs/
+
+# ============================================================
+# NODE / NEXT.JS
+# ============================================================
+
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.vercel/
+
+# Next.js cache
+frontend/.turbo/
+
+# Environment files
+frontend/.env
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+
+# ============================================================
+# TYPESCRIPT
+# ============================================================
+
+*.tsbuildinfo
+
+# ============================================================
+# IDE / EDITORS
+# ============================================================
+
+.vscode/
+.idea/
+
+*.swp
+*.swo
+*~
+
+# ============================================================
+# OS FILES
+# ============================================================
+
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ============================================================
+# TEMPORARY FILES
+# ============================================================
+
+tmp/
+temp/
+*.tmp
+
+# ============================================================
+# PYTHON NOTEBOOKS
+# ============================================================
+
+.ipynb_checkpoints/
+
+# ============================================================
+# TEST / COVERAGE OUTPUT
+# ============================================================
+
+.pytest_cache/
+coverage.xml
+
+# ============================================================
+# GENERATED / LOCAL EVIDENCE
+# ============================================================
+
+# Don't commit locally downloaded/generated evidence
+evidence/
+uploads/
+storage/
+
+# ============================================================
+# PROJECT-SPECIFIC
+# ============================================================
+
+# Local generated reports
+reports/generated/
+
+# Local exports
+exports/
+
+# OS / editor backup files
+*.bak
+*.backup
