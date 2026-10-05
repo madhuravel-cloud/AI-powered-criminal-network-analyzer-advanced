@@ -2,11 +2,26 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-    Network as NetworkIcon,
-    RefreshCw,
+    ArrowLeft,
+    Car,
+    ChevronRight,
+    CreditCard,
+    Link2,
+    MapPin,
+    Network,
+    Phone,
     Search,
+    User,
+    Building2,
     X,
 } from "lucide-react";
+
+import {
+    getCaseEntities,
+    getEntityGraph,
+    type NetworkNode as ApiNetworkNode,
+    type NetworkEdge as ApiNetworkEdge,
+} from "../../lib/api";
 
 import {
     ReactFlow,
@@ -15,6 +30,7 @@ import {
     MiniMap,
     Handle,
     Position,
+    MarkerType,
     type Node,
     type Edge,
     type NodeProps,
@@ -23,694 +39,1727 @@ import {
 import "@xyflow/react/dist/style.css";
 
 
-const API_BASE_URL =
-    process.env.NEXT_PUBLIC_API_URL ||
-    "http://localhost:8000";
+/* ============================================================
+   TYPES
+============================================================ */
 
-const CASE_ID = "case:FIR-101-2025";
-
+type Entity = {
+    id: string;
+    label: string;
+    type: string;
+    properties?: Record<string, unknown>;
+};
 
 type GraphNode = {
     id: string;
-    type: string;
     label: string;
+    type: string;
     properties?: Record<string, unknown>;
 };
 
-type GraphEdge = {
-    id: string;
-    source: string;
-    target: string;
-    relationship: string;
-    properties?: Record<string, unknown>;
+type SelectedRelationship = {
+    edge: ApiNetworkEdge;
+    source?: GraphNode;
+    target?: GraphNode;
 };
 
-type NetworkResponse = {
-    status: string;
-    network: {
-        case_id: string;
-        focused_entity?: string;
-        nodes: GraphNode[];
-        edges: GraphEdge[];
+
+/* ============================================================
+   API CONVERSION
+============================================================ */
+
+function convertApiNode(
+    node: ApiNetworkNode
+): GraphNode {
+    return {
+        id: String(node.id),
+
+        label:
+            node.name ||
+            node.canonical_id ||
+            String(node.id),
+
+        type:
+            node.node_type ||
+            "Entity",
+
+        properties:
+            node.properties,
     };
-};
+}
 
 
-const typeStyles: Record<string, string> = {
-    Case: "border-red-400 bg-red-500/20",
-    Person: "border-cyan-400 bg-cyan-500/20",
-    Phone: "border-blue-400 bg-blue-500/20",
-    Vehicle: "border-yellow-400 bg-yellow-500/20",
-    Location: "border-green-400 bg-green-500/20",
-    Account: "border-purple-400 bg-purple-500/20",
-    Organization: "border-orange-400 bg-orange-500/20",
-    CourtCase: "border-pink-400 bg-pink-500/20",
-    Evidence: "border-slate-400 bg-slate-500/20",
-};
+function convertApiEntity(
+    node: ApiNetworkNode
+): Entity {
+    return {
+        id: String(node.id),
+
+        label:
+            node.name ||
+            node.canonical_id ||
+            String(node.id),
+
+        type:
+            node.node_type ||
+            "Entity",
+
+        properties:
+            node.properties,
+    };
+}
 
 
-function GraphNodeCard({
+/* ============================================================
+   ENTITY ICON
+============================================================ */
+
+function EntityIcon({
+    type,
+    size = 18,
+}: {
+    type: string;
+    size?: number;
+}) {
+    const normalized =
+        type.toLowerCase();
+
+    if (normalized === "person") {
+        return <User size={size} />;
+    }
+
+    if (normalized === "phone") {
+        return <Phone size={size} />;
+    }
+
+    if (normalized === "vehicle") {
+        return <Car size={size} />;
+    }
+
+    if (normalized === "location") {
+        return <MapPin size={size} />;
+    }
+
+    if (normalized === "account") {
+        return <CreditCard size={size} />;
+    }
+
+    if (
+        normalized ===
+        "organization"
+    ) {
+        return (
+            <Building2
+                size={size}
+            />
+        );
+    }
+
+    return <Network size={size} />;
+}
+
+
+/* ============================================================
+   ENTITY STYLE
+============================================================ */
+
+function getEntityStyle(
+    type: string
+) {
+    const normalized =
+        type.toLowerCase();
+
+    if (normalized === "person") {
+        return {
+            border:
+                "border-cyan-400/40",
+            bg:
+                "bg-cyan-400/[0.08]",
+            icon:
+                "text-cyan-300",
+        };
+    }
+
+    if (normalized === "phone") {
+        return {
+            border:
+                "border-violet-400/40",
+            bg:
+                "bg-violet-400/[0.08]",
+            icon:
+                "text-violet-300",
+        };
+    }
+
+    if (normalized === "vehicle") {
+        return {
+            border:
+                "border-amber-400/40",
+            bg:
+                "bg-amber-400/[0.08]",
+            icon:
+                "text-amber-300",
+        };
+    }
+
+    if (normalized === "location") {
+        return {
+            border:
+                "border-emerald-400/40",
+            bg:
+                "bg-emerald-400/[0.08]",
+            icon:
+                "text-emerald-300",
+        };
+    }
+
+    if (normalized === "account") {
+        return {
+            border:
+                "border-pink-400/40",
+            bg:
+                "bg-pink-400/[0.08]",
+            icon:
+                "text-pink-300",
+        };
+    }
+
+    if (
+        normalized ===
+        "organization"
+    ) {
+        return {
+            border:
+                "border-orange-400/40",
+            bg:
+                "bg-orange-400/[0.08]",
+            icon:
+                "text-orange-300",
+        };
+    }
+
+    return {
+        border:
+            "border-white/20",
+        bg:
+            "bg-white/[0.05]",
+        icon:
+            "text-white/60",
+    };
+}
+
+
+/* ============================================================
+   GRAPH NODE
+============================================================ */
+
+function GraphEntityNode({
     data,
 }: NodeProps) {
-    const nodeType = String(data.type || "Unknown");
+
+    const nodeData =
+        data as {
+            label: string;
+            type: string;
+        };
+
+    const style =
+        getEntityStyle(
+            nodeData.type
+        );
 
     return (
-        <>
+        <div
+            className={`
+                relative
+                min-w-[170px]
+                rounded-2xl
+                border
+                ${style.border}
+                ${style.bg}
+                px-4
+                py-3
+                shadow-2xl
+                backdrop-blur-xl
+            `}
+        >
+
             <Handle
                 type="target"
-                position={Position.Top}
-                className="!bg-cyan-400"
+                position={
+                    Position.Top
+                }
+                className="
+                    !h-2
+                    !w-2
+                    !border-0
+                    !bg-cyan-400
+                "
             />
 
-            <div
-                className={`
-                    min-w-[150px]
-                    max-w-[190px]
-                    rounded-xl
-                    border
-                    px-4
-                    py-3
-                    shadow-2xl
-                    backdrop-blur-xl
-                    ${typeStyles[nodeType] || "border-white/20 bg-white/10"}
-                `}
-            >
-                <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.18em] text-white/40">
-                    {nodeType}
+            <div className="flex items-center gap-3">
+
+                <div
+                    className={`
+                        flex
+                        h-9
+                        w-9
+                        shrink-0
+                        items-center
+                        justify-center
+                        rounded-xl
+                        bg-black/30
+                        ${style.icon}
+                    `}
+                >
+                    <EntityIcon
+                        type={
+                            nodeData.type
+                        }
+                        size={18}
+                    />
                 </div>
 
-                <div className="truncate text-sm font-semibold text-white">
-                    {String(data.label)}
+                <div className="min-w-0">
+
+                    <p className="truncate text-sm font-semibold text-white">
+                        {
+                            nodeData.label
+                        }
+                    </p>
+
+                    <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/40">
+                        {
+                            nodeData.type
+                        }
+                    </p>
+
                 </div>
 
-                <div className="mt-1 truncate text-[10px] text-white/40">
-                    {String(data.id)}
-                </div>
             </div>
 
             <Handle
                 type="source"
-                position={Position.Bottom}
-                className="!bg-cyan-400"
+                position={
+                    Position.Bottom
+                }
+                className="
+                    !h-2
+                    !w-2
+                    !border-0
+                    !bg-cyan-400
+                "
             />
-        </>
+
+        </div>
     );
 }
 
 
 const nodeTypes = {
-    graphNode: GraphNodeCard,
+    entity:
+        GraphEntityNode,
 };
 
 
-function convertNodes(
-    nodes: GraphNode[],
-): Node[] {
-    const count = nodes.length;
+/* ============================================================
+   RELATIONSHIP FORMAT
+============================================================ */
 
-    return nodes.map((node, index) => {
-        const angle =
-            (index / Math.max(count, 1)) *
-            Math.PI *
-            2;
+function formatRelationship(
+    relationship: string
+) {
+    if (!relationship) {
+        return "RELATED";
+    }
 
-        const radius =
-            count > 30
-                ? 550
-                : 430;
+    return relationship
+        .replaceAll(
+            "_",
+            " "
+        )
+        .toLowerCase()
+        .replace(
+            /\b\w/g,
+            (char) =>
+                char.toUpperCase()
+        );
+}
 
-        return {
-            id: node.id,
-            type: "graphNode",
+
+/* ============================================================
+   GRAPH BUILDER
+============================================================ */
+
+function buildGraph(
+    apiNodes: GraphNode[],
+    apiEdges: ApiNetworkEdge[],
+    selectedId: string
+) {
+
+    const nodes: Node[] = [];
+    const edges: Edge[] = [];
+
+    const seenNodes =
+        new Set<string>();
+
+    const seenEdges =
+        new Set<string>();
+
+
+    const selectedNode =
+        apiNodes.find(
+            (node) =>
+                String(node.id) ===
+                String(selectedId)
+        );
+
+
+    const otherNodes =
+        apiNodes.filter(
+            (node) =>
+                String(node.id) !==
+                String(selectedId)
+        );
+
+
+    /* CENTER NODE */
+
+    if (selectedNode) {
+
+        nodes.push({
+            id: String(
+                selectedNode.id
+            ),
+
+            type: "entity",
+
             position: {
-                x:
-                    Math.cos(angle) *
-                    radius +
-                    650,
-                y:
-                    Math.sin(angle) *
-                    radius +
-                    400,
+                x: 450,
+                y: 250,
             },
+
             data: {
-                id: node.id,
-                label: node.label,
-                type: node.type,
+                label:
+                    selectedNode.label,
+
+                type:
+                    selectedNode.type,
             },
-        };
-    });
+        });
+
+        seenNodes.add(
+            String(
+                selectedNode.id
+            )
+        );
+    }
+
+
+    /* OTHER NODES */
+
+    otherNodes.forEach(
+        (node, index) => {
+
+            const angle =
+                (
+                    index /
+                    Math.max(
+                        otherNodes.length,
+                        1
+                    )
+                ) *
+                Math.PI *
+                2;
+
+            const radius =
+                300;
+
+            nodes.push({
+
+                id: String(
+                    node.id
+                ),
+
+                type: "entity",
+
+                position: {
+                    x:
+                        450 +
+                        Math.cos(angle) *
+                        radius,
+
+                    y:
+                        250 +
+                        Math.sin(angle) *
+                        radius,
+                },
+
+                data: {
+                    label:
+                        node.label,
+
+                    type:
+                        node.type,
+                },
+            });
+
+            seenNodes.add(
+                String(
+                    node.id
+                )
+            );
+        }
+    );
+
+
+    /* EDGES */
+
+    apiEdges.forEach(
+        (edge, index) => {
+
+            const source =
+                String(
+                    edge.source
+                );
+
+            const target =
+                String(
+                    edge.target
+                );
+
+
+            if (
+                !seenNodes.has(
+                    source
+                ) ||
+                !seenNodes.has(
+                    target
+                )
+            ) {
+                return;
+            }
+
+
+            const edgeId =
+                String(
+                    edge.id ||
+                    `${source}-${target}-${index}`
+                );
+
+
+            if (
+                seenEdges.has(
+                    edgeId
+                )
+            ) {
+                return;
+            }
+
+
+            seenEdges.add(
+                edgeId
+            );
+
+
+            const relationship =
+                edge.relationship_type ||
+                "RELATED";
+
+
+            const touchesSelected =
+                source ===
+                String(
+                    selectedId
+                ) ||
+                target ===
+                String(
+                    selectedId
+                );
+
+
+            edges.push({
+
+                id:
+                    edgeId,
+
+                source,
+
+                target,
+
+                type:
+                    "smoothstep",
+
+                animated:
+                    touchesSelected,
+
+                markerEnd: {
+                    type:
+                        MarkerType.ArrowClosed,
+
+                    width: 18,
+
+                    height: 18,
+                },
+
+                label:
+                    formatRelationship(
+                        relationship
+                    ),
+
+                labelStyle: {
+                    fill:
+                        "#cbd5e1",
+
+                    fontSize:
+                        10,
+
+                    fontWeight:
+                        600,
+                },
+
+                labelBgStyle: {
+                    fill:
+                        "#080b12",
+
+                    fillOpacity:
+                        0.95,
+                },
+
+                labelBgPadding: [
+                    6,
+                    4,
+                ],
+
+                labelBgBorderRadius:
+                    6,
+
+                style: {
+                    stroke:
+                        touchesSelected
+                            ? "#22d3ee"
+                            : "#64748b",
+
+                    strokeWidth:
+                        touchesSelected
+                            ? 2.5
+                            : 1.5,
+                },
+
+                data: {
+                    relationship,
+                },
+            });
+        }
+    );
+
+
+    return {
+        nodes,
+        edges,
+    };
 }
 
 
-function convertEdges(
-    edges: GraphEdge[],
-): Edge[] {
-    return edges.map((edge) => ({
-        id: edge.id,
-        source: edge.source,
-        target: edge.target,
-        label: edge.relationship,
-        animated: false,
-        style: {
-            strokeWidth: 1.5,
-        },
-        labelStyle: {
-            fill: "#94a3b8",
-            fontSize: 9,
-        },
-        labelBgStyle: {
-            fill: "#080b12",
-            fillOpacity: 0.85,
-        },
-    }));
-}
-
+/* ============================================================
+   MAIN
+============================================================ */
 
 export default function NetworkPage() {
-    const [graph, setGraph] =
-        useState<NetworkResponse["network"] | null>(null);
 
-    const [loading, setLoading] =
-        useState(true);
+    /*
+     * IMPORTANT:
+     * This is intentionally NOT string | null.
+     *
+     * Empty string means:
+     * "No FIR has been selected yet."
+     */
+    const [
+        selectedFir,
+        setSelectedFir,
+    ] =
+        useState<string>("");
 
-    const [error, setError] =
-        useState<string | null>(null);
 
-    const [selectedNode, setSelectedNode] =
-        useState<GraphNode | null>(null);
+    const [
+        entities,
+        setEntities,
+    ] =
+        useState<Entity[]>(
+            []
+        );
 
-    const [search, setSearch] =
+
+    const [
+        search,
+        setSearch,
+    ] =
         useState("");
 
-    const [subgraphLoading, setSubgraphLoading] =
+
+    const [
+        loading,
+        setLoading,
+    ] =
+        useState(true);
+
+
+    const [
+        graphLoading,
+        setGraphLoading,
+    ] =
         useState(false);
 
-    const [history, setHistory] =
-        useState<GraphNode[]>([]);
+
+    const [
+        error,
+        setError,
+    ] =
+        useState<string>("");
 
 
-    async function loadGraph() {
-        try {
-            setLoading(true);
-            setError(null);
-
-            const response = await fetch(
-                `${API_BASE_URL}/network?case_id=${encodeURIComponent(
-                    CASE_ID,
-                )}`,
-                {
-                    cache: "no-store",
-                },
-            );
-
-            if (!response.ok) {
-                throw new Error(
-                    await response.text(),
-                );
-            }
-
-            const data: NetworkResponse =
-                await response.json();
-
-            setGraph(data.network);
-
-        } catch (err) {
-            setError(
-                err instanceof Error
-                    ? err.message
-                    : "Failed to load network",
-            );
-        } finally {
-            setLoading(false);
-        }
-    }
+    const [
+        graphVisible,
+        setGraphVisible,
+    ] =
+        useState(false);
 
 
-    async function selectNode(
-        node: GraphNode,
-    ) {
-        try {
-            setSelectedNode(node);
-            setSubgraphLoading(true);
-            setError(null);
-
-            setHistory((previous) => [
-                ...previous,
-                node,
-            ]);
-
-            const response = await fetch(
-                `${API_BASE_URL}/network/entity/${encodeURIComponent(
-                    node.id,
-                )}?case_id=${encodeURIComponent(
-                    CASE_ID,
-                )}`,
-                {
-                    cache: "no-store",
-                },
-            );
-
-            if (!response.ok) {
-                const text =
-                    await response.text();
-
-                throw new Error(
-                    `Entity request failed (${response.status}): ${text}`,
-                );
-            }
-
-            const data: NetworkResponse =
-                await response.json();
-
-            setGraph(data.network);
-
-        } catch (err) {
-            setError(
-                err instanceof Error
-                    ? err.message
-                    : "Failed to load subgraph",
-            );
-        } finally {
-            setSubgraphLoading(false);
-        }
-    }
+    const [
+        selectedEntity,
+        setSelectedEntity,
+    ] =
+        useState<
+            GraphNode | null
+        >(null);
 
 
-    function resetGraph() {
-        setSelectedNode(null);
-        setHistory([]);
-        loadGraph();
-    }
+    const [
+        graphNodes,
+        setGraphNodes,
+    ] =
+        useState<
+            GraphNode[]
+        >([]);
 
+
+    const [
+        graphEdges,
+        setGraphEdges,
+    ] =
+        useState<
+            ApiNetworkEdge[]
+        >([]);
+
+
+    const [
+        selectedRelationship,
+        setSelectedRelationship,
+    ] =
+        useState<
+            SelectedRelationship | null
+        >(null);
+
+
+    /* ========================================================
+       READ FIR
+    ======================================================== */
 
     useEffect(() => {
-        loadGraph();
+
+        const storedFir =
+            window.localStorage.getItem(
+                "criminal-network-selected-fir"
+            );
+
+
+        if (
+            storedFir &&
+            storedFir.trim()
+        ) {
+
+            setSelectedFir(
+                storedFir
+            );
+
+        } else {
+
+            setLoading(
+                false
+            );
+
+            setError(
+                "No FIR selected. Please select an FIR from the Dashboard."
+            );
+        }
+
     }, []);
 
 
-    const filteredNodes = useMemo(() => {
-        if (!graph) {
-            return [];
+    /* ========================================================
+       LOAD ENTITIES
+    ======================================================== */
+
+    useEffect(() => {
+
+        /*
+         * selectedFir is now ALWAYS a string.
+         */
+
+        if (!selectedFir) {
+            return;
         }
 
-        if (!search.trim()) {
-            return graph.nodes;
+
+        async function loadEntities() {
+
+            try {
+
+                setLoading(
+                    true
+                );
+
+                setError(
+                    ""
+                );
+
+
+                const response =
+                    await getCaseEntities(
+                        selectedFir
+                    );
+
+
+                const converted =
+                    response.entities.map(
+                        convertApiEntity
+                    );
+
+
+                setEntities(
+                    converted
+                );
+
+            } catch (err) {
+
+                console.error(
+                    err
+                );
+
+                setError(
+                    err instanceof Error
+                        ? err.message
+                        : "Failed to load FIR entities."
+                );
+
+            } finally {
+
+                setLoading(
+                    false
+                );
+
+            }
         }
 
-        const value =
-            search.toLowerCase();
 
-        return graph.nodes.filter(
-            (node) =>
-                node.label
-                    .toLowerCase()
-                    .includes(value) ||
-                node.id
-                    .toLowerCase()
-                    .includes(value) ||
-                node.type
-                    .toLowerCase()
-                    .includes(value),
+        loadEntities();
+
+    }, [
+        selectedFir,
+    ]);
+
+
+    /* ========================================================
+       FILTER
+    ======================================================== */
+
+    const filteredEntities =
+        useMemo(() => {
+
+            const query =
+                search
+                    .trim()
+                    .toLowerCase();
+
+
+            if (!query) {
+                return entities;
+            }
+
+
+            return entities.filter(
+                (entity) =>
+                    entity.label
+                        .toLowerCase()
+                        .includes(
+                            query
+                        ) ||
+                    entity.type
+                        .toLowerCase()
+                        .includes(
+                            query
+                        )
+            );
+
+        }, [
+            entities,
+            search,
+        ]);
+
+
+    /* ========================================================
+       OPEN GRAPH
+    ======================================================== */
+
+    async function openEntityGraph(
+        entity: Entity
+    ) {
+
+        /*
+         * No nullable FIR anymore.
+         */
+
+        if (!selectedFir) {
+
+            setError(
+                "No FIR selected. Please select an FIR from the Dashboard."
+            );
+
+            return;
+        }
+
+
+        try {
+
+            setGraphLoading(
+                true
+            );
+
+            setError(
+                ""
+            );
+
+            setSelectedRelationship(
+                null
+            );
+
+
+            const response =
+                await getEntityGraph(
+                    selectedFir,
+                    entity.id
+                );
+
+
+            const convertedNodes =
+                response.nodes.map(
+                    convertApiNode
+                );
+
+
+            const selected =
+                convertApiNode(
+                    response.selected_entity
+                );
+
+
+            setSelectedEntity(
+                selected
+            );
+
+
+            setGraphNodes(
+                convertedNodes
+            );
+
+
+            setGraphEdges(
+                response.edges
+            );
+
+
+            setGraphVisible(
+                true
+            );
+
+        } catch (err) {
+
+            console.error(
+                err
+            );
+
+            setError(
+                err instanceof Error
+                    ? err.message
+                    : "Failed to load entity graph."
+            );
+
+        } finally {
+
+            setGraphLoading(
+                false
+            );
+
+        }
+    }
+
+
+    /* ========================================================
+       GRAPH
+    ======================================================== */
+
+    const graph =
+        useMemo(() => {
+
+            if (
+                !graphVisible ||
+                !selectedEntity
+            ) {
+
+                return {
+                    nodes: [],
+                    edges: [],
+                };
+            }
+
+
+            return buildGraph(
+                graphNodes,
+                graphEdges,
+                selectedEntity.id
+            );
+
+        }, [
+            graphVisible,
+            selectedEntity,
+            graphNodes,
+            graphEdges,
+        ]);
+
+
+    /* ========================================================
+       EDGE CLICK
+    ======================================================== */
+
+    function handleEdgeClick(
+        _event: React.MouseEvent,
+        edge: Edge
+    ) {
+
+        const apiEdge =
+            graphEdges.find(
+                (item) =>
+                    String(
+                        item.id
+                    ) ===
+                    String(
+                        edge.id
+                    )
+            );
+
+
+        if (!apiEdge) {
+            return;
+        }
+
+
+        const source =
+            graphNodes.find(
+                (node) =>
+                    String(
+                        node.id
+                    ) ===
+                    String(
+                        apiEdge.source
+                    )
+            );
+
+
+        const target =
+            graphNodes.find(
+                (node) =>
+                    String(
+                        node.id
+                    ) ===
+                    String(
+                        apiEdge.target
+                    )
+            );
+
+
+        setSelectedRelationship({
+            edge:
+                apiEdge,
+
+            source,
+
+            target,
+        });
+
+    }
+
+
+    /* ========================================================
+       BACK
+    ======================================================== */
+
+    function showAllEntities() {
+
+        setGraphVisible(
+            false
         );
-    }, [graph, search]);
 
-
-    const flowNodes =
-        useMemo(
-            () =>
-                convertNodes(
-                    filteredNodes,
-                ),
-            [filteredNodes],
+        setSelectedEntity(
+            null
         );
 
-
-    const visibleIds =
-        new Set(
-            filteredNodes.map(
-                (node) => node.id,
-            ),
+        setGraphNodes(
+            []
         );
 
-
-    const flowEdges =
-        useMemo(
-            () =>
-                convertEdges(
-                    graph?.edges.filter(
-                        (edge) =>
-                            visibleIds.has(
-                                edge.source,
-                            ) &&
-                            visibleIds.has(
-                                edge.target,
-                            ),
-                    ) || [],
-                ),
-            [graph, filteredNodes],
+        setGraphEdges(
+            []
         );
 
+        setSelectedRelationship(
+            null
+        );
+
+    }
+
+
+    /* ========================================================
+       RENDER
+    ======================================================== */
 
     return (
-        <div className="min-h-screen bg-[#05070b] text-white">
 
-            <div className="border-b border-white/10 bg-[#080b12]/95 px-8 py-6">
+        <div className="min-h-screen bg-[#05070b]">
+
+            {/* ==================================================
+                HEADER
+            ================================================== */}
+
+            <header className="border-b border-white/10 bg-[#080b12]/80 px-8 py-6 backdrop-blur-xl">
 
                 <div className="flex items-center justify-between">
 
                     <div>
+
                         <div className="flex items-center gap-3">
-                            <NetworkIcon
+
+                            <Network
                                 size={22}
                                 className="text-cyan-400"
                             />
 
-                            <h1 className="text-2xl font-bold">
-                                Investigation Network
+                            <h1 className="text-2xl font-bold text-white">
+                                Network Analysis
                             </h1>
+
                         </div>
 
                         <p className="mt-1 text-sm text-white/40">
-                            Backend-powered temporal evidence graph
+                            FIR-scoped temporal multilayer entity network
                         </p>
+
                     </div>
 
-                    <div className="flex items-center gap-3">
+
+                    {selectedFir && (
+
+                        <div className="rounded-xl border border-cyan-400/20 bg-cyan-400/[0.05] px-5 py-3">
+
+                            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-cyan-400/70">
+                                Selected FIR
+                            </p>
+
+                            <p className="mt-1 font-mono text-sm text-cyan-300">
+                                {
+                                    selectedFir
+                                }
+                            </p>
+
+                        </div>
+
+                    )}
+
+                </div>
+
+            </header>
+
+
+            {/* ==================================================
+                ERROR
+            ================================================== */}
+
+            {error && (
+
+                <div className="mx-8 mt-6 rounded-xl border border-red-400/20 bg-red-400/[0.05] px-5 py-4 text-sm text-red-300">
+
+                    {
+                        error
+                    }
+
+                </div>
+
+            )}
+
+
+            {/* ==================================================
+                ENTITY VIEW
+            ================================================== */}
+
+            {!graphVisible && (
+
+                <section className="p-8">
+
+                    <div className="mb-6 flex items-center justify-between">
+
+                        <div>
+
+                            <h2 className="text-lg font-semibold text-white">
+                                FIR Entities
+                            </h2>
+
+                            <p className="mt-1 text-sm text-white/40">
+                                Select an entity to inspect its connected network.
+                            </p>
+
+                        </div>
+
 
                         <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
 
                             <Search
-                                size={15}
+                                size={16}
                                 className="text-white/30"
                             />
 
                             <input
-                                value={search}
-                                onChange={(event) =>
+                                value={
+                                    search
+                                }
+                                onChange={(
+                                    e
+                                ) =>
                                     setSearch(
-                                        event.target.value,
+                                        e.target.value
                                     )
                                 }
-                                placeholder="Search entity..."
-                                className="w-48 bg-transparent text-sm outline-none placeholder:text-white/20"
+                                placeholder="Search entities..."
+                                className="w-56 bg-transparent text-sm text-white outline-none placeholder:text-white/25"
                             />
 
-                            {search && (
-                                <button
-                                    onClick={() =>
-                                        setSearch("")
-                                    }
-                                >
-                                    <X
-                                        size={14}
-                                        className="text-white/30"
-                                    />
-                                </button>
+                        </div>
+
+                    </div>
+
+
+                    {loading ? (
+
+                        <div className="flex min-h-[400px] items-center justify-center">
+
+                            <div className="text-sm text-white/40">
+                                Loading FIR entities...
+                            </div>
+
+                        </div>
+
+                    ) : filteredEntities.length === 0 ? (
+
+                        <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-12 text-center">
+
+                            <Network
+                                size={36}
+                                className="mx-auto text-white/20"
+                            />
+
+                            <p className="mt-4 text-white/50">
+                                No entities found for this FIR.
+                            </p>
+
+                        </div>
+
+                    ) : (
+
+                        <div className="grid grid-cols-2 gap-5 xl:grid-cols-4">
+
+                            {filteredEntities.map(
+                                (
+                                    entity
+                                ) => {
+
+                                    const style =
+                                        getEntityStyle(
+                                            entity.type
+                                        );
+
+
+                                    return (
+
+                                        <button
+                                            key={
+                                                entity.id
+                                            }
+                                            onClick={() =>
+                                                openEntityGraph(
+                                                    entity
+                                                )
+                                            }
+                                            className={`
+                                                group
+                                                rounded-2xl
+                                                border
+                                                ${style.border}
+                                                ${style.bg}
+                                                p-5
+                                                text-left
+                                                transition-all
+                                                duration-200
+                                                hover:-translate-y-1
+                                                hover:bg-white/[0.07]
+                                                hover:shadow-2xl
+                                            `}
+                                        >
+
+                                            <div className="flex items-center justify-between">
+
+                                                <div
+                                                    className={`
+                                                        flex
+                                                        h-11
+                                                        w-11
+                                                        items-center
+                                                        justify-center
+                                                        rounded-xl
+                                                        bg-black/30
+                                                        ${style.icon}
+                                                    `}
+                                                >
+                                                    <EntityIcon
+                                                        type={
+                                                            entity.type
+                                                        }
+                                                        size={
+                                                            20
+                                                        }
+                                                    />
+                                                </div>
+
+                                                <ChevronRight
+                                                    size={
+                                                        18
+                                                    }
+                                                    className="text-white/20 transition-transform group-hover:translate-x-1 group-hover:text-cyan-400"
+                                                />
+
+                                            </div>
+
+
+                                            <div className="mt-5">
+
+                                                <p className="truncate text-base font-semibold text-white">
+                                                    {
+                                                        entity.label
+                                                    }
+                                                </p>
+
+                                                <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/35">
+                                                    {
+                                                        entity.type
+                                                    }
+                                                </p>
+
+                                            </div>
+
+                                        </button>
+
+                                    );
+
+                                }
                             )}
 
                         </div>
 
-                        <button
-                            onClick={resetGraph}
-                            className="rounded-xl border border-white/10 bg-white/[0.03] p-3 transition hover:bg-white/[0.08]"
-                        >
-                            <RefreshCw
-                                size={17}
-                            />
-                        </button>
-
-                    </div>
-                </div>
-
-
-                <div className="mt-5 flex items-center gap-3 text-xs">
-
-                    <span className="rounded-lg bg-cyan-500/10 px-3 py-1.5 text-cyan-400">
-                        FIR-101-2025
-                    </span>
-
-                    {selectedNode && (
-                        <>
-                            <span className="text-white/20">
-                                /
-                            </span>
-
-                            <span className="rounded-lg bg-white/[0.05] px-3 py-1.5 text-white/60">
-                                {selectedNode.label}
-                            </span>
-                        </>
                     )}
 
-                    {subgraphLoading && (
-                        <span className="text-cyan-400">
-                            Loading subgraph...
-                        </span>
-                    )}
+                </section>
 
-                </div>
-
-            </div>
-
-
-            {error && (
-                <div className="mx-8 mt-5 rounded-xl border border-red-500/20 bg-red-500/10 px-5 py-4 text-sm text-red-300">
-                    {error}
-                </div>
             )}
 
 
-            <div className="grid grid-cols-[1fr_300px] gap-0">
+            {/* ==================================================
+                GRAPH VIEW
+            ================================================== */}
 
-                <div
-                    className="relative h-[calc(100vh-150px)]"
-                    style={{
-                        background:
-                            "radial-gradient(circle at center, rgba(8,145,178,0.08), transparent 45%)",
-                    }}
-                >
+            {graphVisible && (
 
-                    {loading ? (
-                        <div className="flex h-full items-center justify-center">
-                            <div className="text-sm text-white/40">
-                                Loading investigation graph...
-                            </div>
-                        </div>
-                    ) : (
-                        <ReactFlow
-                            nodes={flowNodes}
-                            edges={flowEdges}
-                            nodeTypes={nodeTypes}
-                            fitView
-                            fitViewOptions={{
-                                padding: 0.25,
-                            }}
-                            onNodeClick={(
-                                _event,
-                                node,
-                            ) => {
-                                const sourceNode =
-                                    graph?.nodes.find(
-                                        (item) =>
-                                            item.id ===
-                                            node.id,
-                                    );
+                <section className="relative h-[calc(100vh-105px)]">
 
-                                if (
-                                    sourceNode
-                                ) {
-                                    selectNode(
-                                        sourceNode,
-                                    );
-                                }
-                            }}
+                    {/* GRAPH TOOLBAR */}
+
+                    <div className="absolute left-6 top-6 z-20 flex items-center gap-3">
+
+                        <button
+                            onClick={
+                                showAllEntities
+                            }
+                            className="flex items-center gap-2 rounded-xl border border-white/10 bg-[#080b12]/90 px-4 py-2.5 text-sm font-medium text-white/70 backdrop-blur-xl transition hover:bg-white/[0.08] hover:text-white"
                         >
-                            <Background
-                                gap={24}
-                                size={1}
+
+                            <ArrowLeft
+                                size={
+                                    16
+                                }
                             />
 
-                            <Controls />
+                            All FIR Entities
 
-                            <MiniMap
-                                nodeColor={(node) => {
-                                    const type =
-                                        String(
-                                            node.data
-                                                ?.type ||
-                                            "",
-                                        );
-
-                                    if (
-                                        type ===
-                                        "Person"
-                                    ) {
-                                        return "#22d3ee";
-                                    }
-
-                                    if (
-                                        type ===
-                                        "Case"
-                                    ) {
-                                        return "#ef4444";
-                                    }
-
-                                    if (
-                                        type ===
-                                        "Evidence"
-                                    ) {
-                                        return "#64748b";
-                                    }
-
-                                    return "#8b5cf6";
-                                }}
-                            />
-                        </ReactFlow>
-                    )}
-
-                </div>
+                        </button>
 
 
-                <aside className="border-l border-white/10 bg-[#080b12]">
+                        {selectedEntity && (
 
-                    <div className="border-b border-white/10 p-5">
+                            <div className="flex items-center gap-3 rounded-xl border border-cyan-400/20 bg-[#080b12]/90 px-4 py-2.5 backdrop-blur-xl">
 
-                        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-white/30">
-                            Network Statistics
-                        </div>
+                                <div className="text-cyan-400">
 
-                        <div className="mt-4 grid grid-cols-2 gap-3">
-
-                            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-                                <div className="text-2xl font-bold">
-                                    {graph?.nodes.length || 0}
-                                </div>
-
-                                <div className="mt-1 text-xs text-white/30">
-                                    Entities
-                                </div>
-                            </div>
-
-                            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-                                <div className="text-2xl font-bold">
-                                    {graph?.edges.length || 0}
-                                </div>
-
-                                <div className="mt-1 text-xs text-white/30">
-                                    Connections
-                                </div>
-                            </div>
-
-                        </div>
-
-                    </div>
-
-
-                    <div className="border-b border-white/10 p-5">
-
-                        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-white/30">
-                            Selected Entity
-                        </div>
-
-                        {selectedNode ? (
-                            <div className="mt-4">
-
-                                <div
-                                    className={`
-                                        inline-flex
-                                        rounded-lg
-                                        border
-                                        px-3
-                                        py-1
-                                        text-[10px]
-                                        font-bold
-                                        uppercase
-                                        tracking-wider
-                                        ${typeStyles[
-                                        selectedNode.type
-                                        ] ||
-                                        "border-white/20"
+                                    <EntityIcon
+                                        type={
+                                            selectedEntity.type
                                         }
-                                    `}
-                                >
-                                    {selectedNode.type}
+                                        size={
+                                            17
+                                        }
+                                    />
+
                                 </div>
 
-                                <div className="mt-3 text-lg font-semibold">
-                                    {selectedNode.label}
-                                </div>
+                                <div>
 
-                                <div className="mt-1 break-all text-xs text-white/30">
-                                    {selectedNode.id}
-                                </div>
+                                    <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-white/35">
+                                        Focus Entity
+                                    </p>
 
-                                <button
-                                    onClick={
-                                        resetGraph
-                                    }
-                                    className="mt-5 w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white/60 transition hover:bg-white/[0.08] hover:text-white"
-                                >
-                                    Back to Investigation Graph
-                                </button>
+                                    <p className="text-sm font-semibold text-white">
+                                        {
+                                            selectedEntity.label
+                                        }
+                                    </p>
+
+                                </div>
 
                             </div>
-                        ) : (
-                            <div className="mt-4 text-sm leading-6 text-white/30">
-                                Select any entity in the graph to load its backend-generated subgraph.
-                            </div>
+
                         )}
 
                     </div>
 
 
-                    <div className="p-5">
+                    {/* RELATIONSHIP PANEL */}
 
-                        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-white/30">
-                            Entity Types
-                        </div>
+                    {selectedRelationship && (
 
-                        <div className="mt-4 space-y-2">
+                        <div className="absolute right-6 top-6 z-30 w-80 rounded-2xl border border-cyan-400/20 bg-[#080b12]/95 p-5 shadow-2xl backdrop-blur-xl">
 
-                            {[
-                                "Person",
-                                "Phone",
-                                "Vehicle",
-                                "Location",
-                                "Account",
-                                "Evidence",
-                                "CourtCase",
-                            ].map(
-                                (type) => {
-                                    const count =
-                                        graph?.nodes.filter(
-                                            (node) =>
-                                                node.type ===
-                                                type,
-                                        ).length || 0;
+                            <div className="flex items-start justify-between">
 
-                                    return (
-                                        <div
-                                            key={type}
-                                            className="flex items-center justify-between rounded-lg bg-white/[0.025] px-3 py-2"
-                                        >
-                                            <span className="text-xs text-white/50">
-                                                {type}
-                                            </span>
+                                <div>
 
-                                            <span className="text-xs font-semibold text-white/70">
-                                                {count}
-                                            </span>
+                                    <div className="flex items-center gap-2">
+
+                                        <Link2
+                                            size={
+                                                16
+                                            }
+                                            className="text-cyan-400"
+                                        />
+
+                                        <p className="text-sm font-semibold text-white">
+                                            Relationship Details
+                                        </p>
+
+                                    </div>
+
+                                    <p className="mt-1 text-[10px] uppercase tracking-[0.18em] text-white/30">
+                                        Network connection
+                                    </p>
+
+                                </div>
+
+
+                                <button
+                                    onClick={() =>
+                                        setSelectedRelationship(
+                                            null
+                                        )
+                                    }
+                                    className="rounded-lg p-1.5 text-white/30 transition hover:bg-white/10 hover:text-white"
+                                >
+                                    <X
+                                        size={
+                                            16
+                                        }
+                                    />
+                                </button>
+
+                            </div>
+
+
+                            {/* TYPE */}
+
+                            <div className="mt-5 rounded-xl border border-cyan-400/10 bg-cyan-400/[0.04] p-4">
+
+                                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-400/60">
+                                    Relationship
+                                </p>
+
+                                <p className="mt-1 text-lg font-semibold text-cyan-300">
+                                    {
+                                        formatRelationship(
+                                            selectedRelationship
+                                                .edge
+                                                .relationship_type
+                                        )
+                                    }
+                                </p>
+
+                            </div>
+
+
+                            {/* SOURCE / TARGET */}
+
+                            <div className="mt-5 space-y-4">
+
+                                <div>
+
+                                    <p className="text-[10px] uppercase tracking-[0.15em] text-white/30">
+                                        Source
+                                    </p>
+
+                                    <div className="mt-1 flex items-center gap-2">
+
+                                        <EntityIcon
+                                            type={
+                                                selectedRelationship
+                                                    .source
+                                                    ?.type ||
+                                                "Entity"
+                                            }
+                                            size={
+                                                14
+                                            }
+                                        />
+
+                                        <p className="text-sm font-medium text-white">
+                                            {
+                                                selectedRelationship
+                                                    .source
+                                                    ?.label ||
+                                                selectedRelationship
+                                                    .edge
+                                                    .source
+                                            }
+                                        </p>
+
+                                    </div>
+
+                                </div>
+
+
+                                <div>
+
+                                    <p className="text-[10px] uppercase tracking-[0.15em] text-white/30">
+                                        Target
+                                    </p>
+
+                                    <div className="mt-1 flex items-center gap-2">
+
+                                        <EntityIcon
+                                            type={
+                                                selectedRelationship
+                                                    .target
+                                                    ?.type ||
+                                                "Entity"
+                                            }
+                                            size={
+                                                14
+                                            }
+                                        />
+
+                                        <p className="text-sm font-medium text-white">
+                                            {
+                                                selectedRelationship
+                                                    .target
+                                                    ?.label ||
+                                                selectedRelationship
+                                                    .edge
+                                                    .target
+                                            }
+                                        </p>
+
+                                    </div>
+
+                                </div>
+
+                            </div>
+
+
+                            {/* PROPERTIES */}
+
+                            {selectedRelationship
+                                .edge
+                                .properties &&
+                                Object.keys(
+                                    selectedRelationship
+                                        .edge
+                                        .properties
+                                ).length >
+                                0 && (
+
+                                    <div className="mt-5 border-t border-white/10 pt-4">
+
+                                        <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-white/30">
+                                            Properties
+                                        </p>
+
+                                        <div className="mt-3 space-y-2">
+
+                                            {Object.entries(
+                                                selectedRelationship
+                                                    .edge
+                                                    .properties
+                                            )
+                                                .slice(
+                                                    0,
+                                                    6
+                                                )
+                                                .map(
+                                                    ([
+                                                        key,
+                                                        value,
+                                                    ]) => (
+
+                                                        <div
+                                                            key={
+                                                                key
+                                                            }
+                                                            className="flex items-start justify-between gap-4"
+                                                        >
+
+                                                            <span className="text-xs text-white/35">
+                                                                {
+                                                                    key
+                                                                }
+                                                            </span>
+
+                                                            <span className="max-w-[170px] truncate text-right text-xs text-white/70">
+                                                                {String(
+                                                                    value
+                                                                )}
+                                                            </span>
+
+                                                        </div>
+
+                                                    )
+                                                )}
+
                                         </div>
-                                    );
-                                },
-                            )}
+
+                                    </div>
+
+                                )}
 
                         </div>
 
-                    </div>
+                    )}
 
-                </aside>
 
-            </div>
+                    {/* GRAPH */}
+
+                    {graphLoading ? (
+
+                        <div className="flex h-full items-center justify-center">
+
+                            <div className="rounded-xl border border-white/10 bg-[#080b12]/90 px-6 py-4 text-sm text-white/50 backdrop-blur-xl">
+                                Building entity network...
+                            </div>
+
+                        </div>
+
+                    ) : (
+
+                        <ReactFlow
+                            nodes={
+                                graph.nodes
+                            }
+                            edges={
+                                graph.edges
+                            }
+                            nodeTypes={
+                                nodeTypes
+                            }
+                            fitView
+                            fitViewOptions={{
+                                padding:
+                                    0.25,
+                            }}
+                            onEdgeClick={
+                                handleEdgeClick
+                            }
+                            onPaneClick={() =>
+                                setSelectedRelationship(
+                                    null
+                                )
+                            }
+                            proOptions={{
+                                hideAttribution:
+                                    true,
+                            }}
+                            defaultEdgeOptions={{
+                                type:
+                                    "smoothstep",
+                            }}
+                        >
+
+                            <Background
+                                gap={
+                                    24
+                                }
+                                size={
+                                    1
+                                }
+                                color={
+                                    "#1e293b"
+                                }
+                            />
+
+                            <Controls
+                                className="
+                                    !border-white/10
+                                    !bg-[#080b12]
+                                "
+                            />
+
+                            <MiniMap
+                                nodeColor={
+                                    "#22d3ee"
+                                }
+                                maskColor="rgba(5,7,11,0.75)"
+                                className="
+                                    !border-white/10
+                                    !bg-[#080b12]
+                                "
+                            />
+
+                        </ReactFlow>
+
+                    )}
+
+                </section>
+
+            )}
 
         </div>
     );

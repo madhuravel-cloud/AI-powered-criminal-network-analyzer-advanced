@@ -1,15 +1,28 @@
+# api/analysis_service.py
+
+from collections import Counter
 from typing import Any, Dict, List
 
 from database.neo4j_connection import driver
 
 
 # ============================================================
-# CASE ID HELPERS
+# CASE / FIR HELPERS
 # ============================================================
 
 def normalize_case_id(case_id: str) -> str:
+    """
+    Convert:
+        FIR-101-2025
+    into:
+        case:FIR-101-2025
+
+    If already normalized, keep it unchanged.
+    """
     if not case_id:
         raise ValueError("case_id is required")
+
+    case_id = case_id.strip()
 
     if case_id.startswith("case:"):
         return case_id
@@ -22,12 +35,17 @@ def normalize_case_id(case_id: str) -> str:
 # ============================================================
 
 def get_case_people(case_id: str) -> List[Dict[str, Any]]:
-    case_id = normalize_case_id(case_id)
+    """
+    Get people directly associated with the selected FIR
+    through that FIR's evidence.
+    """
+
+    canonical_case_id = normalize_case_id(case_id)
 
     query = """
     MATCH (c:Case {id: $case_id})
     MATCH (c)-[:BELONGS_TO]-(e:Evidence)
-    MATCH (p:Person)-[]-(e)
+    MATCH (e)-[]-(p:Person)
 
     RETURN DISTINCT
         p.canonical_id AS person_id,
@@ -39,37 +57,49 @@ def get_case_people(case_id: str) -> List[Dict[str, Any]]:
     with driver.session() as session:
         result = session.run(
             query,
-            case_id=case_id,
+            case_id=canonical_case_id,
         )
 
-        return [
-            {
-                "person_id": record["person_id"],
-                "name": record["name"],
-            }
-            for record in result
-            if record["person_id"]
-        ]
+        return [dict(record) for record in result]
 
 
 # ============================================================
-# CANDIDATE PEOPLE
+# FIR-SCOPED CANDIDATE DISCOVERY
 # ============================================================
 
-def get_candidate_people(
-    case_id: str,
-) -> List[Dict[str, Any]]:
+def get_candidate_people(case_id: str) -> List[Dict[str, Any]]:
+    """
+    Find candidate people using ONLY entities/evidence that are
+    connected to the selected FIR.
 
-    case_id = normalize_case_id(case_id)
+    Important:
+    We do NOT search the entire global graph first.
+
+    Flow:
+
+        FIR
+          ↓
+        Evidence
+          ↓
+        Seed Person
+          ↓
+        Shared Entity
+          ↓
+        Candidate Person
+
+    This prevents every FIR from producing the same candidate set.
+    """
+
+    canonical_case_id = normalize_case_id(case_id)
 
     query = """
-    MATCH (seed_case:Case {id: $case_id})
-    MATCH (seed_case)-[:BELONGS_TO]-(seed_evidence:Evidence)
-    MATCH (seed_evidence)-[]-(seed_person:Person)
+    MATCH (selected_case:Case {id: $case_id})
+    MATCH (selected_case)-[:BELONGS_TO]-(selected_evidence:Evidence)
+    MATCH (seed_person:Person)-[]-(selected_evidence)
 
     MATCH (seed_person)-[]-(shared_entity)
-
     MATCH (candidate:Person)-[]-(shared_entity)
+
     WHERE candidate <> seed_person
 
     RETURN DISTINCT
@@ -82,444 +112,433 @@ def get_candidate_people(
     with driver.session() as session:
         result = session.run(
             query,
-            case_id=case_id,
+            case_id=canonical_case_id,
         )
 
-        return [
-            {
-                "person_id": record["person_id"],
-                "name": record["name"],
-            }
-            for record in result
-            if record["person_id"]
-        ]
+        return [dict(record) for record in result]
 
 
 # ============================================================
-# BULK PERSON FEATURES
-#
-# This replaces the old approach where every candidate caused
-# many separate Neo4j queries.
+# FIR-SCOPED PERSON FEATURES
 # ============================================================
 
-def get_bulk_person_features(
-    person_ids: List[str],
+def get_person_features(
+    person_id: str,
     case_id: str,
-) -> Dict[str, Dict[str, Any]]:
+) -> Dict[str, Any]:
+    """
+    Calculate investigation features for ONE person.
 
-    case_id = normalize_case_id(case_id)
+    The important difference from the previous implementation is
+    that FIR-specific features are calculated from evidence belonging
+    to the selected case.
+    """
 
-    if not person_ids:
-        return {}
+    canonical_case_id = normalize_case_id(case_id)
 
     query = """
-    UNWIND $person_ids AS person_id
-
-    MATCH (p:Person {canonical_id: person_id})
+    MATCH (p:Person {canonical_id: $person_id})
 
     // --------------------------------------------------------
-    // General graph connections
-    // --------------------------------------------------------
-
-    OPTIONAL MATCH (p)-[]-(connected)
-
-    WITH
-        p,
-        count(DISTINCT connected) AS unique_connections
-
-    // --------------------------------------------------------
-    // People
-    // --------------------------------------------------------
-
-    OPTIONAL MATCH (p)-[]-(person:Person)
-
-    WITH
-        p,
-        unique_connections,
-        count(DISTINCT person) AS connected_people
-
-    // --------------------------------------------------------
-    // Phones
-    // --------------------------------------------------------
-
-    OPTIONAL MATCH (p)-[]-(phone:Phone)
-
-    WITH
-        p,
-        unique_connections,
-        connected_people,
-        count(DISTINCT phone) AS connected_phones
-
-    // --------------------------------------------------------
-    // Vehicles
-    // --------------------------------------------------------
-
-    OPTIONAL MATCH (p)-[]-(vehicle:Vehicle)
-
-    WITH
-        p,
-        unique_connections,
-        connected_people,
-        connected_phones,
-        count(DISTINCT vehicle) AS connected_vehicles
-
-    // --------------------------------------------------------
-    // Locations
-    // --------------------------------------------------------
-
-    OPTIONAL MATCH (p)-[]-(location:Location)
-
-    WITH
-        p,
-        unique_connections,
-        connected_people,
-        connected_phones,
-        connected_vehicles,
-        count(DISTINCT location) AS connected_locations
-
-    // --------------------------------------------------------
-    // Accounts
-    // --------------------------------------------------------
-
-    OPTIONAL MATCH (p)-[]-(account:Account)
-
-    WITH
-        p,
-        unique_connections,
-        connected_people,
-        connected_phones,
-        connected_vehicles,
-        connected_locations,
-        count(DISTINCT account) AS connected_accounts
-
-    // --------------------------------------------------------
-    // Court cases
-    // --------------------------------------------------------
-
-    OPTIONAL MATCH (p)-[]-(court:CourtCase)
-
-    WITH
-        p,
-        unique_connections,
-        connected_people,
-        connected_phones,
-        connected_vehicles,
-        connected_locations,
-        connected_accounts,
-        count(DISTINCT court) AS court_cases
-
-    // --------------------------------------------------------
-    // Evidence
-    // --------------------------------------------------------
-
-    OPTIONAL MATCH (p)-[]-(evidence:Evidence)
-
-    WITH
-        p,
-        unique_connections,
-        connected_people,
-        connected_phones,
-        connected_vehicles,
-        connected_locations,
-        connected_accounts,
-        court_cases,
-        collect(DISTINCT evidence) AS evidences
-
-    // --------------------------------------------------------
-    // Cases
-    // --------------------------------------------------------
-
-    OPTIONAL MATCH (p)-[]-(case_node:Case)
-
-    WITH
-        p,
-        unique_connections,
-        connected_people,
-        connected_phones,
-        connected_vehicles,
-        connected_locations,
-        connected_accounts,
-        court_cases,
-        evidences,
-        collect(DISTINCT case_node) AS cases
-
-    // --------------------------------------------------------
-    // Selected case evidence
+    // FIR-SCOPED EVIDENCE
     // --------------------------------------------------------
 
     OPTIONAL MATCH (selected_case:Case {id: $case_id})
-        -[:BELONGS_TO]-(selected_evidence:Evidence)
-
-    OPTIONAL MATCH (p)-[]-(selected_evidence)
-
-    WITH
-        p,
-        unique_connections,
-        connected_people,
-        connected_phones,
-        connected_vehicles,
-        connected_locations,
-        connected_accounts,
-        court_cases,
-        evidences,
-        cases,
-        count(DISTINCT selected_evidence) AS case_relationship_count
-
-    // --------------------------------------------------------
-    // CDR
-    // --------------------------------------------------------
-
-    OPTIONAL MATCH (p)-[]-(cdr_phone:Phone)
-    OPTIONAL MATCH (cdr_phone)-[cdr_rel:RELATED]-(other_phone:Phone)
+    OPTIONAL MATCH (selected_case)-[:BELONGS_TO]-(case_evidence:Evidence)
+    OPTIONAL MATCH (p)-[]-(case_evidence)
 
     WITH
         p,
-        unique_connections,
-        connected_people,
-        connected_phones,
-        connected_vehicles,
-        connected_locations,
-        connected_accounts,
-        court_cases,
-        evidences,
-        cases,
-        case_relationship_count,
-        count(DISTINCT other_phone) AS cdr_unique_contacts,
-        count(DISTINCT cdr_rel) AS cdr_call_count,
-        coalesce(
-            sum(
-                toFloat(
-                    coalesce(
-                        cdr_rel.duration,
-                        cdr_rel.call_duration,
-                        0
-                    )
-                )
-            ),
-            0
-        ) AS cdr_total_duration
+        selected_case,
+        collect(DISTINCT case_evidence) AS fir_evidence
 
     // --------------------------------------------------------
-    // Return core information
+    // FIR-SCOPED RELATIONSHIPS
     // --------------------------------------------------------
+
+    UNWIND CASE
+        WHEN size(fir_evidence) = 0
+        THEN [NULL]
+        ELSE fir_evidence
+    END AS evidence
+
+    OPTIONAL MATCH (p)-[fir_rel]-(evidence)
+
+    WITH
+        p,
+        selected_case,
+        fir_evidence,
+        collect(DISTINCT fir_rel) AS fir_relationships
+
+    // --------------------------------------------------------
+    // FIR-SCOPED PEOPLE
+    // --------------------------------------------------------
+
+    UNWIND CASE
+        WHEN size(fir_evidence) = 0
+        THEN [NULL]
+        ELSE fir_evidence
+    END AS evidence_for_people
+
+    OPTIONAL MATCH (evidence_for_people)-[]-(fir_person:Person)
+
+    WITH
+        p,
+        selected_case,
+        fir_evidence,
+        fir_relationships,
+        collect(DISTINCT fir_person) AS fir_people
+
+    // --------------------------------------------------------
+    // FIR-SCOPED PHONES
+    // --------------------------------------------------------
+
+    UNWIND CASE
+        WHEN size(fir_evidence) = 0
+        THEN [NULL]
+        ELSE fir_evidence
+    END AS evidence_for_phones
+
+    OPTIONAL MATCH (evidence_for_phones)-[]-(phone:Phone)
+
+    WITH
+        p,
+        selected_case,
+        fir_evidence,
+        fir_relationships,
+        fir_people,
+        collect(DISTINCT phone) AS fir_phones
+
+    // --------------------------------------------------------
+    // FIR-SCOPED VEHICLES
+    // --------------------------------------------------------
+
+    UNWIND CASE
+        WHEN size(fir_evidence) = 0
+        THEN [NULL]
+        ELSE fir_evidence
+    END AS evidence_for_vehicles
+
+    OPTIONAL MATCH (evidence_for_vehicles)-[]-(vehicle:Vehicle)
+
+    WITH
+        p,
+        selected_case,
+        fir_evidence,
+        fir_relationships,
+        fir_people,
+        fir_phones,
+        collect(DISTINCT vehicle) AS fir_vehicles
+
+    // --------------------------------------------------------
+    // FIR-SCOPED LOCATIONS
+    // --------------------------------------------------------
+
+    UNWIND CASE
+        WHEN size(fir_evidence) = 0
+        THEN [NULL]
+        ELSE fir_evidence
+    END AS evidence_for_locations
+
+    OPTIONAL MATCH (evidence_for_locations)-[]-(location:Location)
+
+    WITH
+        p,
+        selected_case,
+        fir_evidence,
+        fir_relationships,
+        fir_people,
+        fir_phones,
+        fir_vehicles,
+        collect(DISTINCT location) AS fir_locations
+
+    // --------------------------------------------------------
+    // FIR-SCOPED ACCOUNTS
+    // --------------------------------------------------------
+
+    UNWIND CASE
+        WHEN size(fir_evidence) = 0
+        THEN [NULL]
+        ELSE fir_evidence
+    END AS evidence_for_accounts
+
+    OPTIONAL MATCH (evidence_for_accounts)-[]-(account:Account)
+
+    WITH
+        p,
+        selected_case,
+        fir_evidence,
+        fir_relationships,
+        fir_people,
+        fir_phones,
+        fir_vehicles,
+        fir_locations,
+        collect(DISTINCT account) AS fir_accounts
+
+    // --------------------------------------------------------
+    // GLOBAL CASE CONNECTIONS
+    // Used only as a secondary cross-case signal.
+    // --------------------------------------------------------
+
+    OPTIONAL MATCH (p)-[]-(all_evidence:Evidence)
+    OPTIONAL MATCH (all_evidence)-[:BELONGS_TO]-(connected_case:Case)
+
+    WITH
+        p,
+        selected_case,
+        fir_evidence,
+        fir_relationships,
+        fir_people,
+        fir_phones,
+        fir_vehicles,
+        fir_locations,
+        fir_accounts,
+        collect(DISTINCT connected_case) AS all_cases
 
     RETURN
         p.canonical_id AS person_id,
         p.name AS name,
 
-        unique_connections,
+        // FIR-specific counts
+        size(fir_evidence) AS evidence_count,
+        size(fir_relationships) AS relationship_count,
+        size(fir_people) AS connected_people,
+        size(fir_phones) AS connected_phones,
+        size(fir_vehicles) AS connected_vehicles,
+        size(fir_locations) AS connected_locations,
+        size(fir_accounts) AS connected_accounts,
 
-        unique_connections AS total_relationships,
+        // Global cases are used only for cross-case intelligence
+        size(all_cases) AS connected_cases,
 
-        unique_connections AS degree,
+        // FIR evidence types
+        [e IN fir_evidence | e.evidence_type] AS evidence_types,
 
-        connected_people,
-        connected_phones,
-        connected_vehicles,
-        connected_locations,
-        connected_accounts,
-        size(cases) AS connected_cases,
-        court_cases,
+        // Relationship types inside FIR
+        [r IN fir_relationships | type(r)] AS relationship_types,
 
-        size(
-            [
-                x IN evidences
-                WHERE x IS NOT NULL
-            ]
-        ) AS evidence_count,
-
-        case_relationship_count,
-
-        cdr_call_count,
-        cdr_unique_contacts,
-        cdr_total_duration,
-
-        [
-            e IN evidences
-            WHERE e IS NOT NULL
-            AND e.evidence_type IS NOT NULL
-            | e.evidence_type
-        ] AS evidence_types,
-
-        [
-            e IN evidences
-            WHERE e IS NOT NULL
-            AND e.id IS NOT NULL
-            | e.id
-        ] AS evidence_ids
-
-    ORDER BY p.name
+        // FIR evidence IDs
+        [e IN fir_evidence | e.id] AS evidence_ids
     """
 
     with driver.session() as session:
-        result = session.run(
+        record = session.run(
             query,
-            person_ids=person_ids,
-            case_id=case_id,
-        )
+            person_id=person_id,
+            case_id=canonical_case_id,
+        ).single()
 
-        features = {}
+        if not record:
+            return empty_person_features(person_id)
 
-        for record in result:
+        data = dict(record)
 
-            evidence_types = list(
-                set(
-                    record["evidence_types"] or []
-                )
-            )
+    evidence_types = [
+        x for x in (data.get("evidence_types") or [])
+        if x
+    ]
 
-            evidence_ids = list(
-                set(
-                    record["evidence_ids"] or []
-                )
-            )
+    relationship_types = [
+        x for x in (data.get("relationship_types") or [])
+        if x
+    ]
 
-            source_counts = {
-                "FIR_DOCUMENT": 0,
-                "CDR_FILE": 0,
-                "CCTV_VIDEO": 0,
-                "VEHICLE_RECORD": 0,
-                "COURT_DOCUMENT": 0,
-                "BANK_TRANSACTION_FILE": 0,
-                "LOCATION_RECORD": 0,
-            }
+    # --------------------------------------------------------
+    # FIR-SPECIFIC EVIDENCE COUNTS
+    # --------------------------------------------------------
 
-            for evidence_type in evidence_types:
-                if evidence_type in source_counts:
-                    source_counts[evidence_type] += 1
+    evidence_counter = Counter(evidence_types)
 
-            # ------------------------------------------------
-            # Base features
-            # ------------------------------------------------
+    fir_evidence_count = len(evidence_types)
 
-            person_features = {
-                "unique_connections": record["unique_connections"] or 0,
+    cdr_evidence_count = sum(
+        count
+        for evidence_type, count in evidence_counter.items()
+        if "CDR" in evidence_type.upper()
+    )
 
-                "total_relationships":
-                    record["total_relationships"] or 0,
+    cctv_evidence_count = sum(
+        count
+        for evidence_type, count in evidence_counter.items()
+        if "CCTV" in evidence_type.upper()
+    )
 
-                "degree":
-                    record["degree"] or 0,
+    vehicle_evidence_count = sum(
+        count
+        for evidence_type, count in evidence_counter.items()
+        if "VEHICLE" in evidence_type.upper()
+    )
 
-                "connected_people":
-                    record["connected_people"] or 0,
+    court_evidence_count = sum(
+        count
+        for evidence_type, count in evidence_counter.items()
+        if "COURT" in evidence_type.upper()
+    )
 
-                "connected_phones":
-                    record["connected_phones"] or 0,
+    financial_evidence_count = sum(
+        count
+        for evidence_type, count in evidence_counter.items()
+        if "FINANCIAL" in evidence_type.upper()
+        or "BANK" in evidence_type.upper()
+    )
 
-                "connected_vehicles":
-                    record["connected_vehicles"] or 0,
+    location_evidence_count = sum(
+        count
+        for evidence_type, count in evidence_counter.items()
+        if "LOCATION" in evidence_type.upper()
+    )
 
-                "connected_locations":
-                    record["connected_locations"] or 0,
+    fir_evidence_count_only = sum(
+        count
+        for evidence_type, count in evidence_counter.items()
+        if "FIR" in evidence_type.upper()
+    )
 
-                "connected_accounts":
-                    record["connected_accounts"] or 0,
+    # --------------------------------------------------------
+    # FIR-SPECIFIC SIGNALS
+    # --------------------------------------------------------
 
-                "connected_cases":
-                    record["connected_cases"] or 0,
+    relationship_type_count = len(set(relationship_types))
 
-                "court_cases":
-                    record["court_cases"] or 0,
+    # In this FIR, the person is directly associated with the
+    # selected case evidence.
+    case_relationship_count = len(
+        data.get("evidence_ids") or []
+    )
 
-                "evidence_count":
-                    record["evidence_count"] or 0,
+    # Connected cases minus the selected case gives a
+    # cross-case signal.
+    connected_cases = int(data.get("connected_cases") or 0)
 
-                "fir_evidence_count":
-                    source_counts["FIR_DOCUMENT"],
+    cross_case_connections = max(
+        connected_cases - 1,
+        0,
+    )
 
-                "cdr_evidence_count":
-                    source_counts["CDR_FILE"],
+    unique_connections = (
+        int(data.get("connected_people") or 0)
+        + int(data.get("connected_phones") or 0)
+        + int(data.get("connected_vehicles") or 0)
+        + int(data.get("connected_locations") or 0)
+        + int(data.get("connected_accounts") or 0)
+    )
 
-                "cctv_evidence_count":
-                    source_counts["CCTV_VIDEO"],
+    total_relationships = int(
+        data.get("relationship_count") or 0
+    )
 
-                "vehicle_evidence_count":
-                    source_counts["VEHICLE_RECORD"],
+    degree = total_relationships
 
-                "court_evidence_count":
-                    source_counts["COURT_DOCUMENT"],
+    # --------------------------------------------------------
+    # RETURN 35-FEATURE STRUCTURE
+    # --------------------------------------------------------
 
-                "financial_evidence_count":
-                    source_counts[
-                        "BANK_TRANSACTION_FILE"
-                    ],
+    return {
+        "unique_connections": unique_connections,
+        "total_relationships": total_relationships,
+        "degree": degree,
 
-                "location_evidence_count":
-                    source_counts["LOCATION_RECORD"],
+        "connected_people": int(
+            data.get("connected_people") or 0
+        ),
 
-                "source_layer_count":
-                    len(
-                        [
-                            value
-                            for value in source_counts.values()
-                            if value > 0
-                        ]
-                    ),
+        "connected_phones": int(
+            data.get("connected_phones") or 0
+        ),
 
-                "relationship_type_count": 0,
+        "connected_vehicles": int(
+            data.get("connected_vehicles") or 0
+        ),
 
-                "case_relationship_count":
-                    record["case_relationship_count"] or 0,
+        "connected_locations": int(
+            data.get("connected_locations") or 0
+        ),
 
-                "cross_case_connections":
-                    max(
-                        (record["connected_cases"] or 0) - 1,
-                        0,
-                    ),
+        "connected_accounts": int(
+            data.get("connected_accounts") or 0
+        ),
 
-                "cdr_call_count":
-                    record["cdr_call_count"] or 0,
+        "connected_cases": connected_cases,
 
-                "cdr_unique_contacts":
-                    record["cdr_unique_contacts"] or 0,
+        "court_cases": court_evidence_count,
 
-                "cdr_total_duration":
-                    float(
-                        record["cdr_total_duration"] or 0
-                    ),
+        "evidence_count": fir_evidence_count,
 
-                "cctv_observation_count":
-                    source_counts["CCTV_VIDEO"],
+        "fir_evidence_count": fir_evidence_count_only,
 
-                "cctv_unique_locations": 0,
+        "cdr_evidence_count": cdr_evidence_count,
 
-                "cctv_vehicle_links": 0,
+        "cctv_evidence_count": cctv_evidence_count,
 
-                "vehicle_links":
-                    record["connected_vehicles"] or 0,
+        "vehicle_evidence_count": vehicle_evidence_count,
 
-                "unique_vehicles":
-                    record["connected_vehicles"] or 0,
+        "court_evidence_count": court_evidence_count,
 
-                "location_links":
-                    record["connected_locations"] or 0,
+        "financial_evidence_count": financial_evidence_count,
 
-                "unique_locations":
-                    record["connected_locations"] or 0,
+        "location_evidence_count": location_evidence_count,
 
-                "financial_transaction_count":
-                    source_counts[
-                        "BANK_TRANSACTION_FILE"
-                    ],
+        "source_layer_count": len(
+            set(evidence_types)
+        ),
 
-                "financial_total_amount": 0,
+        "relationship_type_count": relationship_type_count,
 
-                "temporal_span_days": 0,
-            }
+        "case_relationship_count": case_relationship_count,
 
-            features[
-                record["person_id"]
-            ] = person_features
+        "cross_case_connections": cross_case_connections,
 
-    return features
+        "cdr_call_count": cdr_evidence_count,
+
+        "cdr_unique_contacts": int(
+            data.get("connected_phones") or 0
+        ),
+
+        "cdr_total_duration": 0,
+
+        "cctv_observation_count": cctv_evidence_count,
+
+        "cctv_unique_locations": int(
+            data.get("connected_locations") or 0
+        ),
+
+        "cctv_vehicle_links": int(
+            data.get("connected_vehicles") or 0
+        ),
+
+        "vehicle_links": int(
+            data.get("connected_vehicles") or 0
+        ),
+
+        "unique_vehicles": int(
+            data.get("connected_vehicles") or 0
+        ),
+
+        "location_links": int(
+            data.get("connected_locations") or 0
+        ),
+
+        "unique_locations": int(
+            data.get("connected_locations") or 0
+        ),
+
+        "financial_transaction_count": financial_evidence_count,
+
+        "financial_total_amount": 0,
+
+        "temporal_span_days": 0,
+
+        # Extra useful metadata
+        "_evidence_types": evidence_types,
+        "_relationship_types": relationship_types,
+        "_evidence_ids": data.get("evidence_ids") or [],
+    }
 
 
-# ============================================================
-# EMPTY FEATURE OBJECT
-# ============================================================
-
-def empty_features() -> Dict[str, Any]:
+def empty_person_features(person_id: str) -> Dict[str, Any]:
+    """
+    Return a valid zero-filled Layer 1 feature object.
+    """
 
     return {
         "unique_connections": 0,
@@ -557,6 +576,9 @@ def empty_features() -> Dict[str, Any]:
         "financial_transaction_count": 0,
         "financial_total_amount": 0,
         "temporal_span_days": 0,
+        "_evidence_types": [],
+        "_relationship_types": [],
+        "_evidence_ids": [],
     }
 
 
@@ -568,279 +590,199 @@ def get_supporting_relationships(
     person_id: str,
     case_id: str,
 ) -> List[Dict[str, Any]]:
+    """
+    Return relationships that support the person's relevance
+    specifically within the selected FIR.
+    """
 
-    case_id = normalize_case_id(case_id)
+    canonical_case_id = normalize_case_id(case_id)
 
     query = """
-    MATCH (p:Person {canonical_id: $person_id})
-    MATCH (p)-[r]-(connected)
+    MATCH (c:Case {id: $case_id})
+    MATCH (c)-[:BELONGS_TO]-(e:Evidence)
+    MATCH (p:Person {canonical_id: $person_id})-[r]-(e)
 
-    OPTIONAL MATCH (connected_evidence:Evidence)
-    WHERE connected_evidence.id = r.evidence_id
+    RETURN DISTINCT
+        type(r) AS relationship_type,
+        coalesce(e.evidence_type, "UNKNOWN") AS evidence_type,
+        e.id AS evidence_id
 
-    RETURN
-        type(r) AS graph_relationship,
-
-        coalesce(
-            r.relationship_type,
-            type(r)
-        ) AS relationship_type,
-
-        coalesce(
-            connected.canonical_id,
-            connected.id
-        ) AS connected_entity_id,
-
-        coalesce(
-            connected.name,
-            connected.fir_number,
-            connected.id,
-            connected.canonical_id
-        ) AS connected_entity,
-
-        coalesce(
-            r.source_layer,
-            connected.source_layer,
-            connected_evidence.evidence_type
-        ) AS source_layer,
-
-        r.timestamp AS timestamp,
-
-        coalesce(
-            r.evidence_id,
-            connected_evidence.id
-        ) AS evidence_id,
-
-        coalesce(
-            r.confidence,
-            1.0
-        ) AS confidence
-
-    LIMIT 200
+    ORDER BY evidence_type, relationship_type
+    LIMIT 100
     """
 
     with driver.session() as session:
         result = session.run(
             query,
+            case_id=canonical_case_id,
             person_id=person_id,
-            case_id=case_id,
         )
 
-        return [
-            dict(record)
-            for record in result
-        ]
+        return [dict(record) for record in result]
 
 
 # ============================================================
-# PERSON EVIDENCE
+# RELEVANT CASES
 # ============================================================
 
-def get_person_evidence_ids(
-    person_id: str,
+def get_relevant_case_ids(
     case_id: str,
+    person_id: str | None = None,
 ) -> List[str]:
-
-    query = """
-    MATCH (p:Person {canonical_id: $person_id})
-    MATCH (p)-[]-(e:Evidence)
-
-    RETURN DISTINCT e.id AS evidence_id
     """
+    Find other cases connected through the same person/evidence
+    network.
+    """
+
+    canonical_case_id = normalize_case_id(case_id)
+
+    if person_id:
+        query = """
+        MATCH (p:Person {canonical_id: $person_id})
+        MATCH (p)-[]-(e:Evidence)
+        MATCH (e)-[:BELONGS_TO]-(other_case:Case)
+
+        WHERE other_case.id <> $case_id
+
+        RETURN DISTINCT other_case.id AS case_id
+        ORDER BY case_id
+        """
+
+        params = {
+            "person_id": person_id,
+            "case_id": canonical_case_id,
+        }
+
+    else:
+        query = """
+        MATCH (seed:Case {id: $case_id})
+        MATCH (seed)-[:BELONGS_TO]-(seed_evidence:Evidence)
+        MATCH (seed_evidence)-[]-(person:Person)
+        MATCH (person)-[]-(other_evidence:Evidence)
+        MATCH (other_evidence)-[:BELONGS_TO]-(other_case:Case)
+
+        WHERE other_case.id <> seed.id
+
+        RETURN DISTINCT other_case.id AS case_id
+        ORDER BY case_id
+        """
+
+        params = {
+            "case_id": canonical_case_id,
+        }
 
     with driver.session() as session:
         result = session.run(
             query,
-            person_id=person_id,
-            case_id=case_id,
+            **params,
         )
 
         return [
-            record["evidence_id"]
+            record["case_id"]
             for record in result
-            if record["evidence_id"]
         ]
 
 
 # ============================================================
-# TIMELINE
+# PERSON TIMELINE
 # ============================================================
 
 def get_person_timeline(
     person_id: str,
     case_id: str,
 ) -> List[Dict[str, Any]]:
+    """
+    Return timeline/evidence information for the selected FIR.
+    """
+
+    canonical_case_id = normalize_case_id(case_id)
 
     query = """
-    MATCH (p:Person {canonical_id: $person_id})
-    MATCH (p)-[r]-(connected)
+    MATCH (c:Case {id: $case_id})
+    MATCH (c)-[:BELONGS_TO]-(e:Evidence)
+    MATCH (p:Person {canonical_id: $person_id})-[]-(e)
 
-    OPTIONAL MATCH (e:Evidence)
-    WHERE e.id = r.evidence_id
-
-    RETURN
-        r.timestamp AS timestamp,
-
-        coalesce(
-            r.relationship_type,
-            type(r)
-        ) AS relationship_type,
-
-        coalesce(
-            r.source_layer,
-            e.evidence_type
-        ) AS source_layer,
-
-        coalesce(
-            connected.canonical_id,
-            connected.id
-        ) AS connected_entity_id,
-
-        coalesce(
-            connected.name,
-            connected.fir_number,
-            connected.id
-        ) AS connected_entity,
-
-        coalesce(
-            r.evidence_id,
-            e.id
-        ) AS evidence_id
+    RETURN DISTINCT
+        e.id AS evidence_id,
+        e.evidence_type AS evidence_type,
+        e.created_at AS timestamp
 
     ORDER BY timestamp
-    LIMIT 200
+    LIMIT 100
     """
 
     with driver.session() as session:
         result = session.run(
             query,
+            case_id=canonical_case_id,
             person_id=person_id,
-            case_id=case_id,
         )
 
-        return [
-            dict(record)
-            for record in result
-        ]
+        return [dict(record) for record in result]
 
 
 # ============================================================
-# CONNECTED CASES
-# ============================================================
-
-def get_relevant_case_ids(
-    case_id: str,
-) -> List[str]:
-
-    case_id = normalize_case_id(case_id)
-
-    query = """
-    MATCH (seed:Case {id: $case_id})
-    MATCH (seed)-[:BELONGS_TO]-(seed_evidence:Evidence)
-    MATCH (seed_evidence)-[]-(person:Person)
-
-    MATCH (person)-[]-(other_evidence:Evidence)
-    MATCH (other:Case)-[:BELONGS_TO]-(other_evidence)
-
-    WHERE other.id <> seed.id
-
-    RETURN DISTINCT other.id AS case_id
-    ORDER BY other.id
-    """
-
-    with driver.session() as session:
-        result = session.run(
-            query,
-            case_id=case_id,
-        )
-
-        return [
-            record["case_id"]
-            for record in result
-            if record["case_id"]
-        ]
-
-
-# ============================================================
-# SIGNALS
+# SIGNAL GENERATION
 # ============================================================
 
 def get_person_signals(
     features: Dict[str, Any],
-    relationships: List[Dict[str, Any]],
-    source_layers: List[str],
-    connected_cases: List[str],
 ) -> List[str]:
+    """
+    Generate investigator-facing signals from FIR-specific
+    features.
+    """
 
     signals = []
 
-    if features.get(
-        "case_relationship_count",
-        0,
-    ) > 0:
-
+    if features["case_relationship_count"] > 0:
         signals.append(
-            "Direct relationship with selected case"
+            "Direct evidence association with selected FIR"
         )
 
-    if features.get(
-        "cross_case_connections",
-        0,
-    ) > 0:
-
+    if features["connected_people"] >= 2:
         signals.append(
-            "Connected to additional cases"
+            "Multiple person connections within FIR evidence"
         )
 
-    if features.get(
-        "cdr_unique_contacts",
-        0,
-    ) > 0:
-
+    if features["connected_phones"] > 0:
         signals.append(
-            "Communication network detected"
+            "Phone-related evidence connection"
         )
 
-    if features.get(
-        "cctv_observation_count",
-        0,
-    ) > 0:
-
+    if features["connected_vehicles"] > 0:
         signals.append(
-            "CCTV-linked activity detected"
+            "Vehicle-related evidence connection"
         )
 
-    if features.get(
-        "financial_transaction_count",
-        0,
-    ) > 0:
-
+    if features["connected_locations"] > 0:
         signals.append(
-            "Financial evidence detected"
+            "Location-related evidence connection"
         )
 
-    if features.get(
-        "connected_vehicles",
-        0,
-    ) > 0:
-
+    if features["financial_evidence_count"] > 0:
         signals.append(
-            "Vehicle association detected"
+            "Financial evidence connection"
         )
 
-    if features.get(
-        "connected_locations",
-        0,
-    ) > 0:
-
+    if features["cctv_evidence_count"] > 0:
         signals.append(
-            "Location association detected"
+            "CCTV evidence connection"
         )
 
-    if len(source_layers) >= 3:
-
+    if features["cdr_evidence_count"] > 0:
         signals.append(
-            "Multi-source evidence presence"
+            "CDR evidence connection"
+        )
+
+    if features["cross_case_connections"] > 0:
+        signals.append(
+            "Cross-case association detected"
+        )
+
+    if features["source_layer_count"] >= 3:
+        signals.append(
+            "Multiple evidence source types"
         )
 
     return signals
@@ -853,397 +795,449 @@ def get_person_signals(
 def calculate_relevance_score(
     features: Dict[str, Any],
 ) -> float:
+    """
+    FIR-SCOPED investigation relevance score.
 
-    weights = {
-        "case_relationship_count": 0.30,
-        "cross_case_connections": 0.20,
-        "unique_connections": 0.15,
-        "connected_people": 0.10,
-        "connected_phones": 0.05,
-        "connected_vehicles": 0.05,
-        "connected_locations": 0.05,
-        "connected_accounts": 0.05,
-        "connected_cases": 0.05,
-    }
+    This is NOT:
+        - probability of guilt
+        - probability of crime
+        - ML confidence
+        - model accuracy
 
-    score = 0.0
+    It is a ranking score used to prioritize investigative
+    attention.
+    """
 
-    for feature, weight in weights.items():
+    # --------------------------------------------------------
+    # FIR-SPECIFIC COMPONENTS
+    # --------------------------------------------------------
 
-        value = float(
-            features.get(feature, 0)
-            or 0
-        )
+    direct_evidence = min(
+        features["case_relationship_count"] / 10.0,
+        1.0,
+    )
 
-        normalized = min(
-            value / 10.0,
-            1.0,
-        )
+    fir_relationships = min(
+        features["total_relationships"] / 15.0,
+        1.0,
+    )
 
-        score += (
-            normalized * weight * 100
-        )
+    cdr_signal = min(
+        features["cdr_evidence_count"] / 5.0,
+        1.0,
+    )
+
+    cctv_signal = min(
+        features["cctv_evidence_count"] / 5.0,
+        1.0,
+    )
+
+    financial_signal = min(
+        features["financial_evidence_count"] / 5.0,
+        1.0,
+    )
+
+    vehicle_location_signal = min(
+        (
+            features["vehicle_evidence_count"]
+            + features["location_evidence_count"]
+        ) / 8.0,
+        1.0,
+    )
+
+    cross_case_signal = min(
+        features["cross_case_connections"] / 5.0,
+        1.0,
+    )
+
+    # --------------------------------------------------------
+    # WEIGHTS
+    # --------------------------------------------------------
+
+    score = (
+        direct_evidence * 30.0
+        + fir_relationships * 20.0
+        + cdr_signal * 10.0
+        + cctv_signal * 10.0
+        + financial_signal * 10.0
+        + vehicle_location_signal * 10.0
+        + cross_case_signal * 10.0
+    )
 
     return round(
-        min(score, 100),
+        max(0.0, min(score, 100.0)),
         2,
     )
 
 
 # ============================================================
-# ANOMALY
+# ANOMALY DETECTION
 # ============================================================
 
 def calculate_anomaly(
     features: Dict[str, Any],
-) -> Dict[str, Any]:
+) -> List[str]:
+    """
+    Simple graph-derived anomaly indicators.
+
+    These are investigative indicators, not crime predictions.
+    """
 
     indicators = []
 
-    if features.get(
-        "cross_case_connections",
-        0,
-    ) >= 3:
-
+    if (
+        features["cross_case_connections"] >= 3
+    ):
         indicators.append(
-            "High cross-case connectivity"
+            "Strong cross-case association"
         )
 
-    if features.get(
-        "connected_people",
-        0,
-    ) >= 5:
-
+    if (
+        features["source_layer_count"] >= 4
+    ):
         indicators.append(
-            "Large person network"
+            "Activity spans multiple evidence sources"
         )
 
-    if features.get(
-        "source_layer_count",
-        0,
-    ) >= 4:
-
+    if (
+        features["connected_people"] >= 4
+    ):
         indicators.append(
-            "Multi-source evidence footprint"
+            "High person connectivity within FIR"
         )
 
-    if features.get(
-        "financial_transaction_count",
-        0,
-    ) >= 3:
-
+    if (
+        features["connected_phones"] >= 2
+    ):
         indicators.append(
-            "Multiple financial records"
+            "Multiple phone connections"
         )
 
-    if features.get(
-        "cdr_unique_contacts",
-        0,
-    ) >= 5:
-
+    if (
+        features["connected_vehicles"] >= 2
+    ):
         indicators.append(
-            "High communication connectivity"
+            "Multiple vehicle connections"
         )
 
-    return {
-        "present": len(indicators) >= 2,
-        "indicator_count": len(indicators),
-        "indicators": indicators,
-    }
+    if (
+        features["financial_evidence_count"] > 0
+        and features["cdr_evidence_count"] > 0
+        and features["cctv_evidence_count"] > 0
+    ):
+        indicators.append(
+            "Convergence across financial, CDR and CCTV evidence"
+        )
+
+    return indicators
 
 
 # ============================================================
-# COMPLETE INVESTIGATION ANALYSIS
+# INVESTIGATOR MESSAGE
+# ============================================================
+
+def generate_investigator_message(
+    case_id: str,
+    ranked_candidates: List[Dict[str, Any]],
+    anomaly_indicators: List[str],
+) -> str:
+    """
+    Generate a deterministic investigator-facing summary.
+
+    This is intentionally rule-based for the current prototype.
+    It is NOT a real LLM call.
+    """
+
+    if not ranked_candidates:
+        return (
+            f"No relevant connected persons were identified "
+            f"for {case_id}."
+        )
+
+    top = ranked_candidates[0]
+
+    name = top["name"]
+    score = top["relevance_score"]
+
+    features = top["features"]
+
+    evidence_count = features["evidence_count"]
+    cross_case = features["cross_case_connections"]
+    sources = features["source_layer_count"]
+
+    message = (
+        f"For {case_id}, {name} currently has the highest "
+        f"investigation relevance score ({score}/100). "
+        f"The ranking is supported by {evidence_count} "
+        f"FIR-linked evidence connection(s), "
+        f"{sources} evidence source type(s), and "
+        f"{cross_case} cross-case connection(s)."
+    )
+
+    if anomaly_indicators:
+        message += (
+            f" The analysis also identified "
+            f"{len(anomaly_indicators)} investigative "
+            f"anomaly indicator(s) requiring review."
+        )
+
+    message += (
+        " This score is an investigative prioritization signal "
+        "and does not represent a determination of guilt."
+    )
+
+    return message
+
+
+# ============================================================
+# MAIN ANALYSIS
 # ============================================================
 
 def analyze_investigation(
     case_id: str,
 ) -> Dict[str, Any]:
+    """
+    Main FIR-specific investigation analysis.
 
-    case_id = normalize_case_id(case_id)
+    Pipeline:
+
+        Selected FIR
+             ↓
+        FIR evidence
+             ↓
+        FIR people
+             ↓
+        FIR-connected candidates
+             ↓
+        FIR-specific features
+             ↓
+        relevance score
+             ↓
+        anomaly indicators
+             ↓
+        top 5
+    """
+
+    canonical_case_id = normalize_case_id(case_id)
 
     # --------------------------------------------------------
-    # STEP 1
-    # Get people directly connected to selected FIR
+    # 1. DIRECT PEOPLE
     # --------------------------------------------------------
 
-    case_people = get_case_people(
-        case_id
+    seed_people = get_case_people(
+        canonical_case_id
     )
 
-    # --------------------------------------------------------
-    # STEP 2
-    # Get candidate people
-    # --------------------------------------------------------
-
-    candidate_people = get_candidate_people(
-        case_id
-    )
-
-    if not candidate_people:
-
+    if not seed_people:
         return {
             "case_id": case_id,
-            "seed_people": case_people,
+            "seed_people": [],
             "candidate_count": 0,
-            "overall_relevance_score": 0.0,
+            "overall_relevance_score": 0,
             "top_relevant_people": [],
             "anomaly": {
                 "present": False,
                 "indicator_count": 0,
                 "indicators": [],
             },
+            "llm_message": (
+                f"No people were found directly connected "
+                f"to {case_id}."
+            ),
         }
 
     # --------------------------------------------------------
-    # STEP 3
-    # BULK FEATURE EXTRACTION
-    #
-    # One Neo4j query instead of many queries per candidate.
+    # 2. CANDIDATES
     # --------------------------------------------------------
 
-    candidate_ids = [
-        person["person_id"]
-        for person in candidate_people
-        if person.get("person_id")
-    ]
-
-    bulk_features = get_bulk_person_features(
-        candidate_ids,
-        case_id,
+    candidate_people = get_candidate_people(
+        canonical_case_id
     )
 
-    # --------------------------------------------------------
-    # STEP 4
-    # Connected cases are the same investigation-level result.
-    # Calculate ONCE.
-    # --------------------------------------------------------
+    # Add direct FIR people too, so they can be ranked.
+    all_candidates: Dict[str, Dict[str, Any]] = {}
 
-    connected_cases = get_relevant_case_ids(
-        case_id
-    )
+    for person in seed_people:
+        if person.get("person_id"):
+            all_candidates[
+                person["person_id"]
+            ] = {
+                "person_id": person["person_id"],
+                "name": person.get("name")
+                or person["person_id"],
+                "direct_case_person": True,
+            }
+
+    for person in candidate_people:
+        if person.get("person_id"):
+            if person["person_id"] not in all_candidates:
+                all_candidates[
+                    person["person_id"]
+                ] = {
+                    "person_id": person["person_id"],
+                    "name": person.get("name")
+                    or person["person_id"],
+                    "direct_case_person": False,
+                }
 
     # --------------------------------------------------------
-    # STEP 5
-    # Calculate ranking locally
+    # 3. FEATURE EXTRACTION + SCORING
     # --------------------------------------------------------
 
     ranked_candidates = []
 
-    for candidate in candidate_people:
+    for person_id, candidate in all_candidates.items():
 
-        person_id = candidate["person_id"]
-
-        features = bulk_features.get(
-            person_id,
-            empty_features(),
+        features = get_person_features(
+            person_id=person_id,
+            case_id=canonical_case_id,
         )
 
         score = calculate_relevance_score(
             features
         )
 
-        anomaly = calculate_anomaly(
+        signals = get_person_signals(
             features
+        )
+
+        supporting_relationships = (
+            get_supporting_relationships(
+                person_id=person_id,
+                case_id=canonical_case_id,
+            )
+        )
+
+        timeline = get_person_timeline(
+            person_id=person_id,
+            case_id=canonical_case_id,
+        )
+
+        relevant_cases = get_relevant_case_ids(
+            canonical_case_id,
+            person_id=person_id,
         )
 
         ranked_candidates.append(
             {
                 "person_id": person_id,
-
-                "name": candidate.get(
-                    "name",
-                    "Unknown Person",
-                ),
-
+                "name": candidate["name"],
                 "relevance_score": score,
+
+                "direct_case_person": candidate[
+                    "direct_case_person"
+                ],
+
+                "signals": signals,
 
                 "features": features,
 
-                "supporting_relationships": [],
+                "supporting_relationships":
+                    supporting_relationships,
 
-                "connected_cases": connected_cases,
+                "timeline": timeline,
 
-                "source_layers": [],
-
-                "evidence_ids": [],
-
-                "timeline": [],
-
-                "signals": [],
-
-                "anomaly": anomaly,
+                "relevant_cases":
+                    relevant_cases,
             }
         )
 
     # --------------------------------------------------------
-    # STEP 6
-    # Sort
+    # 4. SORT
     # --------------------------------------------------------
 
     ranked_candidates.sort(
-        key=lambda item: item[
-            "relevance_score"
-        ],
+        key=lambda item: item["relevance_score"],
         reverse=True,
     )
 
     # --------------------------------------------------------
-    # STEP 7
-    # Detailed graph information ONLY for top 10
-    #
-    # This is the major performance improvement.
+    # 5. TOP 5
     # --------------------------------------------------------
 
-    top_people = ranked_candidates[:10]
-
-    for person in top_people:
-
-        person_id = person["person_id"]
-
-        relationships = (
-            get_supporting_relationships(
-                person_id,
-                case_id,
-            )
-        )
-
-        source_layers = sorted(
-            list(
-                set(
-                    relationship.get(
-                        "source_layer"
-                    )
-                    for relationship in relationships
-                    if relationship.get(
-                        "source_layer"
-                    )
-                )
-            )
-        )
-
-        evidence_ids = sorted(
-            list(
-                set(
-                    relationship.get(
-                        "evidence_id"
-                    )
-                    for relationship in relationships
-                    if relationship.get(
-                        "evidence_id"
-                    )
-                )
-            )
-        )
-
-        timeline = get_person_timeline(
-            person_id,
-            case_id,
-        )
-
-        signals = get_person_signals(
-            person["features"],
-            relationships,
-            source_layers,
-            connected_cases,
-        )
-
-        person["supporting_relationships"] = (
-            relationships
-        )
-
-        person["source_layers"] = (
-            source_layers
-        )
-
-        person["evidence_ids"] = (
-            evidence_ids
-        )
-
-        person["timeline"] = (
-            timeline
-        )
-
-        person["signals"] = (
-            signals
-        )
+    top_people = ranked_candidates[:5]
 
     # --------------------------------------------------------
-    # STEP 8
-    # Overall relevance
+    # 6. OVERALL SCORE
     # --------------------------------------------------------
 
     if top_people:
-
         overall_score = round(
             sum(
                 person["relevance_score"]
                 for person in top_people
-            )
-            / len(top_people),
+            ) / len(top_people),
             2,
         )
-
     else:
-
-        overall_score = 0.0
+        overall_score = 0
 
     # --------------------------------------------------------
-    # STEP 9
-    # Overall anomaly indicators
+    # 7. ANOMALY AGGREGATION
     # --------------------------------------------------------
 
-    anomaly_indicators = []
+    anomaly_counter = Counter()
 
-    for person in top_people:
-
-        anomaly = person.get(
-            "anomaly",
-            {},
+    for person in ranked_candidates:
+        person_anomalies = calculate_anomaly(
+            person["features"]
         )
 
-        anomaly_indicators.extend(
-            anomaly.get(
-                "indicators",
-                [],
-            )
-        )
+        for indicator in person_anomalies:
+            anomaly_counter[indicator] += 1
 
-    anomaly_indicators = sorted(
-        list(
-            set(
-                anomaly_indicators
-            )
-        )
+    anomaly_indicators = list(
+        anomaly_counter.keys()
     )
 
     # --------------------------------------------------------
-    # FINAL RESULT
+    # 8. LLM-STYLE INVESTIGATOR MESSAGE
+    # --------------------------------------------------------
+
+    llm_message = generate_investigator_message(
+        case_id=case_id,
+        ranked_candidates=top_people,
+        anomaly_indicators=anomaly_indicators,
+    )
+
+    # --------------------------------------------------------
+    # 9. CLEAN INTERNAL FIELDS
+    # --------------------------------------------------------
+
+    for person in ranked_candidates:
+
+        # Keep the 35 features but remove internal metadata
+        # from the API response.
+        person["features"] = {
+            key: value
+            for key, value in person["features"].items()
+            if not key.startswith("_")
+        }
+
+    # --------------------------------------------------------
+    # 10. RESPONSE
     # --------------------------------------------------------
 
     return {
         "case_id": case_id,
 
-        "seed_people": case_people,
+        "seed_people": seed_people,
 
         "candidate_count": len(
             ranked_candidates
         ),
 
-        "overall_relevance_score":
-            overall_score,
+        "overall_relevance_score": overall_score,
 
-        "top_relevant_people":
-            top_people,
+        "top_relevant_people": top_people,
 
         "anomaly": {
-            "present":
-                len(anomaly_indicators) >= 2,
-
-            "indicator_count":
-                len(anomaly_indicators),
-
-            "indicators":
-                anomaly_indicators,
+            "present": len(anomaly_indicators) >= 2,
+            "indicator_count": len(
+                anomaly_indicators
+            ),
+            "indicators": anomaly_indicators,
         },
+
+        "llm_message": llm_message,
     }

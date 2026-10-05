@@ -43,7 +43,6 @@ export interface RelevantCasesResponse {
 
 
 export async function getCases(): Promise<CaseData[]> {
-
     const response = await fetch(
         `${API_BASE_URL}/cases`,
         {
@@ -52,9 +51,7 @@ export async function getCases(): Promise<CaseData[]> {
     );
 
     if (!response.ok) {
-
-        const errorText =
-            await response.text();
+        const errorText = await response.text();
 
         throw new Error(
             `Failed to fetch cases (${response.status}): ${errorText}`
@@ -71,7 +68,6 @@ export async function getCases(): Promise<CaseData[]> {
 export async function getCase(
     caseId: string
 ): Promise<CaseData> {
-
     const response = await fetch(
         `${API_BASE_URL}/cases/${encodeURIComponent(caseId)}`,
         {
@@ -80,9 +76,7 @@ export async function getCase(
     );
 
     if (!response.ok) {
-
-        const errorText =
-            await response.text();
+        const errorText = await response.text();
 
         throw new Error(
             `Failed to fetch case (${response.status}): ${errorText}`
@@ -99,7 +93,6 @@ export async function getCase(
 export async function getRelevantCases(
     caseId: string
 ): Promise<CaseData[]> {
-
     const response = await fetch(
         `${API_BASE_URL}/cases/relevant/${encodeURIComponent(caseId)}`,
         {
@@ -108,9 +101,7 @@ export async function getRelevantCases(
     );
 
     if (!response.ok) {
-
-        const errorText =
-            await response.text();
+        const errorText = await response.text();
 
         throw new Error(
             `Failed to fetch relevant cases (${response.status}): ${errorText}`
@@ -172,7 +163,6 @@ export interface DashboardResponse {
 
 
 export async function getDashboard(): Promise<DashboardResponse> {
-
     const response = await fetch(
         `${API_BASE_URL}/dashboard`,
         {
@@ -181,9 +171,7 @@ export async function getDashboard(): Promise<DashboardResponse> {
     );
 
     if (!response.ok) {
-
-        const errorText =
-            await response.text();
+        const errorText = await response.text();
 
         throw new Error(
             `Failed to fetch dashboard (${response.status}): ${errorText}`
@@ -204,33 +192,58 @@ export interface SeedPerson {
 }
 
 
+// ============================================================
+// CANDIDATE FEATURES
+// ============================================================
+
 export interface CandidateFeatures {
     unique_connections?: number;
     total_relationships?: number;
     degree?: number;
+
     connected_people?: number;
     connected_phones?: number;
     connected_vehicles?: number;
     connected_locations?: number;
     connected_accounts?: number;
     connected_cases?: number;
+
+    court_cases?: number;
+
+    evidence_count?: number;
+    fir_evidence_count?: number;
+    cdr_evidence_count?: number;
+    cctv_evidence_count?: number;
+    vehicle_evidence_count?: number;
+    court_evidence_count?: number;
+    financial_evidence_count?: number;
+    location_evidence_count?: number;
+
+    source_layer_count?: number;
+    relationship_type_count?: number;
+
     case_relationship_count?: number;
     cross_case_connections?: number;
+
     cdr_call_count?: number;
     cdr_unique_contacts?: number;
     cdr_total_duration?: number;
+
     cctv_observation_count?: number;
     cctv_unique_locations?: number;
     cctv_vehicle_links?: number;
+
     vehicle_links?: number;
     unique_vehicles?: number;
+
     location_links?: number;
     unique_locations?: number;
+
     financial_transaction_count?: number;
     financial_total_amount?: number;
-    evidence_count?: number;
-    source_layer_count?: number;
-    relationship_type_count?: number;
+
+    temporal_span_days?: number;
+
     [key: string]:
     | number
     | string
@@ -240,56 +253,152 @@ export interface CandidateFeatures {
 }
 
 
+// ============================================================
+// SUPPORTING RELATIONSHIPS
+// ============================================================
+
 export interface SupportingRelationship {
     graph_relationship?: string;
     relationship_type?: string;
+
     connected_entity_id?: string;
     connected_entity?: string;
+
     source_layer?: string;
+
     timestamp?: string;
+
     evidence_id?: string;
+
     confidence?: number;
-    [key: string]: unknown;
+
+    [key: string]:
+    | string
+    | number
+    | boolean
+    | null
+    | undefined;
 }
 
+
+// ============================================================
+// TIMELINE
+// ============================================================
 
 export interface TimelineEvent {
     timestamp?: string;
+
     relationship_type?: string;
+
     source_layer?: string;
+
     connected_entity_id?: string;
+
     connected_entity?: string;
+
     evidence_id?: string;
-    [key: string]: unknown;
+
+    [key: string]:
+    | string
+    | number
+    | boolean
+    | null
+    | undefined;
 }
 
+
+// ============================================================
+// CANDIDATE
+// ============================================================
 
 export interface Candidate {
     person_id?: string;
+
     name?: string;
+
     relevance_score?: number;
+
     features?: CandidateFeatures;
+
     supporting_relationships?: SupportingRelationship[];
+
     connected_cases?: string[];
+
     source_layers?: string[];
+
     evidence_ids?: string[];
+
     timeline?: TimelineEvent[];
+
     signals?: string[];
-    [key: string]: unknown;
+
+    reasons?: string[];
+
+    relationship_types?: string[];
 }
 
+
+// ============================================================
+// ANOMALY
+// ============================================================
+
+export interface InvestigationAnomaly {
+    detected: boolean;
+
+    level:
+    | "HIGH"
+    | "MEDIUM"
+    | "LOW"
+    | "NONE"
+    | string;
+
+    score?: number;
+
+    message?: string;
+
+    reasons?: string[];
+}
+
+
+// ============================================================
+// INVESTIGATION ANALYSIS
+// ============================================================
 
 export interface InvestigationAnalysis {
     case_id: string;
+
     seed_people: SeedPerson[];
+
     candidate_count: number;
+
+    overall_relevance_score: number;
+
     top_relevant_people: Candidate[];
-    [key: string]: unknown;
+
+    anomaly: InvestigationAnomaly;
+
+    llm_message: string;
+
+    // Keep these optional because some older backend
+    // responses may not return them yet.
+
+    investigation_summary?: string;
+
+    analysis_summary?: string;
+
+    evidence_summary?: string;
+
+    lead_summary?: string;
 }
 
 
+// ============================================================
+// ANALYSIS RESPONSE
+// ============================================================
+
 export interface AnalysisResponse {
     status: string;
+
     analysis: InvestigationAnalysis;
 }
 
@@ -297,7 +406,6 @@ export interface AnalysisResponse {
 export async function analyzeInvestigation(
     caseId: string
 ): Promise<InvestigationAnalysis> {
-
     const response = await fetch(
         `${API_BASE_URL}/investigations/${encodeURIComponent(caseId)}/analyze`,
         {
@@ -307,9 +415,7 @@ export async function analyzeInvestigation(
     );
 
     if (!response.ok) {
-
-        const errorText =
-            await response.text();
+        const errorText = await response.text();
 
         throw new Error(
             `Failed to analyze investigation (${response.status}): ${errorText}`
@@ -324,37 +430,190 @@ export async function analyzeInvestigation(
 
 
 // ============================================================
+// NETWORK
+// ============================================================
+
+export interface NetworkEntity {
+    id: string;
+
+    node_type: string;
+
+    name: string;
+
+    /*
+     * Neo4j canonical identifier.
+     *
+     * Examples:
+     * person:ravi
+     * phone:9876543210
+     * vehicle:TN01AB1234
+     */
+
+    canonical_id?: string | null;
+
+    properties?: Record<string, unknown>;
+}
+
+
+export interface NetworkEntitiesResponse {
+    status: string;
+
+    case_id: string;
+
+    count: number;
+
+    entities: NetworkEntity[];
+}
+
+
+/*
+ * Node returned by the entity graph endpoint.
+ */
+
+export interface NetworkNode {
+    id: string;
+
+    node_type: string;
+
+    name: string;
+
+    canonical_id?: string | null;
+
+    properties?: Record<string, unknown>;
+}
+
+
+export interface NetworkEdge {
+    id: string;
+
+    source: string;
+
+    target: string;
+
+    relationship_type: string;
+
+    properties?: Record<string, unknown>;
+}
+
+
+export interface EntityGraphResponse {
+    status: string;
+
+    case_id: string;
+
+    selected_entity: NetworkNode;
+
+    nodes: NetworkNode[];
+
+    edges: NetworkEdge[];
+}
+
+
+/**
+ * Get all entities directly belonging to
+ * the selected FIR.
+ */
+
+export async function getCaseEntities(
+    caseId: string
+): Promise<NetworkEntitiesResponse> {
+    const response = await fetch(
+        `${API_BASE_URL}/network/case/${encodeURIComponent(caseId)}/entities`,
+        {
+            cache: "no-store",
+        }
+    );
+
+    if (!response.ok) {
+        const errorText = await response.text();
+
+        throw new Error(
+            `Failed to fetch case entities (${response.status}): ${errorText}`
+        );
+    }
+
+    return response.json();
+}
+
+
+/**
+ * Get the network around a selected entity.
+ *
+ * The backend controls the FIR scope.
+ */
+
+export async function getEntityGraph(
+    caseId: string,
+    entityId: string
+): Promise<EntityGraphResponse> {
+    const response = await fetch(
+        `${API_BASE_URL}/network/case/${encodeURIComponent(caseId)}/entity/${encodeURIComponent(entityId)}`,
+        {
+            cache: "no-store",
+        }
+    );
+
+    if (!response.ok) {
+        const errorText = await response.text();
+
+        throw new Error(
+            `Failed to fetch entity graph (${response.status}): ${errorText}`
+        );
+    }
+
+    return response.json();
+}
+
+
+// ============================================================
 // EVIDENCE
 // ============================================================
 
 export interface EvidenceData {
     id: string;
+
     case_id: string;
+
     evidence_type: string | null;
+
     source: string | null;
+
     storage_path: string | null;
+
     extracted_text: string | null;
+
     file_hash: string | null;
+
     layer_id: string | null;
+
     created_at: string | null;
 }
 
 
 export interface EvidenceResponse {
     status: string;
+
     count: number;
+
     evidence: EvidenceData[];
 }
 
 
 export interface EvidenceCreate {
     id: string;
+
     case_id: string;
+
     evidence_type: string;
+
     source?: string;
+
     storage_path?: string;
+
     extracted_text?: string;
+
     file_hash?: string;
+
     layer_id?: string;
 }
 
@@ -362,7 +621,6 @@ export interface EvidenceCreate {
 export async function getEvidence(
     caseId?: string
 ): Promise<EvidenceData[]> {
-
     const url = caseId
         ? `${API_BASE_URL}/evidence?case_id=${encodeURIComponent(caseId)}`
         : `${API_BASE_URL}/evidence`;
@@ -375,9 +633,7 @@ export async function getEvidence(
     );
 
     if (!response.ok) {
-
-        const errorText =
-            await response.text();
+        const errorText = await response.text();
 
         throw new Error(
             `Failed to fetch evidence (${response.status}): ${errorText}`
@@ -394,22 +650,21 @@ export async function getEvidence(
 export async function createEvidence(
     evidence: EvidenceCreate
 ): Promise<EvidenceData> {
-
     const response = await fetch(
         `${API_BASE_URL}/evidence`,
         {
             method: "POST",
+
             headers: {
                 "Content-Type": "application/json",
             },
+
             body: JSON.stringify(evidence),
         }
     );
 
     if (!response.ok) {
-
-        const errorText =
-            await response.text();
+        const errorText = await response.text();
 
         throw new Error(
             `Failed to create evidence (${response.status}): ${errorText}`

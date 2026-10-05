@@ -1,6 +1,4 @@
-from typing import Any, Dict, Optional, Set
-
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException
 
 from database.neo4j_connection import driver
 
@@ -11,9 +9,9 @@ router = APIRouter(
 )
 
 
-# ---------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------
+# ============================================================
+# CASE ID
+# ============================================================
 
 def normalize_case_id(case_id: str) -> str:
     if not case_id:
@@ -25,45 +23,31 @@ def normalize_case_id(case_id: str) -> str:
     return f"case:{case_id}"
 
 
-def get_node_id(node: Any) -> Optional[str]:
+# ============================================================
+# NODE HELPERS
+# ============================================================
+
+def is_internal_node(node) -> bool:
     labels = set(node.labels)
 
-    if "Case" in labels:
-        return node.get("id")
-
-    if "Evidence" in labels:
-        return node.get("id")
-
-    if "CourtCase" in labels:
-        return node.get("id")
-
-    canonical_id = node.get("canonical_id")
-    if canonical_id:
-        return canonical_id
-
-    entity_id = node.get("entity_id")
-    if entity_id:
-        return entity_id
-
-    node_id = node.get("id")
-    if node_id:
-        return node_id
-
-    return None
+    return (
+        "Case" in labels
+        or "Evidence" in labels
+    )
 
 
-def get_node_type(node: Any) -> str:
+def get_node_type(node) -> str:
+
     labels = set(node.labels)
 
     priority = [
-        "Case",
         "Person",
         "Phone",
         "Vehicle",
         "Location",
         "Account",
         "Organization",
-        "CourtCase",
+        "Case",
         "Evidence",
     ]
 
@@ -71,503 +55,718 @@ def get_node_type(node: Any) -> str:
         if label in labels:
             return label
 
-    return next(iter(labels), "Unknown")
+    if labels:
+        return sorted(labels)[0]
+
+    return "Entity"
 
 
-def get_node_label(node: Any) -> str:
+def clean_value(value):
+
+    if value is None:
+        return None
+
+    value = str(value).strip()
+
+    if not value:
+        return None
+
+    return value
+
+
+# ============================================================
+# NAME RESOLUTION
+# ============================================================
+
+def get_node_name(node) -> str:
+
+    props = dict(node)
+
     node_type = get_node_type(node)
 
+    # --------------------------------------------------------
+    # PERSON
+    # --------------------------------------------------------
+
     if node_type == "Person":
-        return (
-            node.get("name")
-            or node.get("canonical_id")
-            or "Unknown Person"
-        )
+
+        candidates = [
+            props.get("name"),
+            props.get("full_name"),
+            props.get("person_name"),
+            props.get("display_name"),
+            props.get("canonical_id"),
+        ]
+
+        for value in candidates:
+            value = clean_value(value)
+
+            if value:
+                return value
+
+
+    # --------------------------------------------------------
+    # PHONE
+    # --------------------------------------------------------
 
     if node_type == "Phone":
-        return (
-            node.get("name")
-            or node.get("canonical_id")
-            or "Unknown Phone"
-        )
+
+        candidates = [
+            props.get("phone_number"),
+            props.get("number"),
+            props.get("phone"),
+            props.get("mobile"),
+            props.get("name"),
+            props.get("canonical_id"),
+        ]
+
+        for value in candidates:
+            value = clean_value(value)
+
+            if value:
+                return value
+
+
+    # --------------------------------------------------------
+    # VEHICLE
+    # --------------------------------------------------------
 
     if node_type == "Vehicle":
-        return (
-            node.get("name")
-            or node.get("canonical_id")
-            or "Unknown Vehicle"
-        )
+
+        candidates = [
+            props.get("registration_number"),
+            props.get("vehicle_number"),
+            props.get("registration"),
+            props.get("number"),
+            props.get("name"),
+            props.get("canonical_id"),
+        ]
+
+        for value in candidates:
+            value = clean_value(value)
+
+            if value:
+                return value
+
+
+    # --------------------------------------------------------
+    # LOCATION
+    # --------------------------------------------------------
 
     if node_type == "Location":
-        return (
-            node.get("name")
-            or node.get("canonical_id")
-            or "Unknown Location"
-        )
+
+        candidates = [
+            props.get("location_name"),
+            props.get("address"),
+            props.get("place"),
+            props.get("location"),
+            props.get("name"),
+            props.get("canonical_id"),
+        ]
+
+        for value in candidates:
+            value = clean_value(value)
+
+            if value:
+                return value
+
+
+    # --------------------------------------------------------
+    # ACCOUNT
+    # --------------------------------------------------------
 
     if node_type == "Account":
-        return (
-            node.get("name")
-            or node.get("canonical_id")
-            or "Unknown Account"
-        )
+
+        candidates = [
+            props.get("account_number"),
+            props.get("account_id"),
+            props.get("number"),
+            props.get("name"),
+            props.get("canonical_id"),
+        ]
+
+        for value in candidates:
+            value = clean_value(value)
+
+            if value:
+                return value
+
+
+    # --------------------------------------------------------
+    # ORGANIZATION
+    # --------------------------------------------------------
 
     if node_type == "Organization":
-        return (
-            node.get("name")
-            or node.get("canonical_id")
-            or "Unknown Organization"
-        )
 
-    if node_type == "Case":
-        return (
-            node.get("fir_number")
-            or node.get("id")
-            or "Unknown Case"
-        )
+        candidates = [
+            props.get("name"),
+            props.get("organization_name"),
+            props.get("company_name"),
+            props.get("org_name"),
+            props.get("canonical_id"),
+        ]
 
-    if node_type == "Evidence":
-        return (
-            node.get("evidence_type")
-            or node.get("id")
-            or "Evidence"
-        )
+        for value in candidates:
+            value = clean_value(value)
 
-    if node_type == "CourtCase":
-        return (
-            node.get("court_case_number")
-            or node.get("court_name")
-            or node.get("id")
-            or "Court Case"
-        )
-
-    return get_node_id(node) or "Unknown"
+            if value:
+                return value
 
 
-def serialize_node(node: Any) -> Dict[str, Any]:
-    node_id = get_node_id(node)
+    # --------------------------------------------------------
+    # GENERIC FALLBACK
+    # --------------------------------------------------------
+
+    candidates = [
+        props.get("name"),
+        props.get("display_name"),
+        props.get("canonical_id"),
+        props.get("id"),
+    ]
+
+    for value in candidates:
+
+        value = clean_value(value)
+
+        if value:
+            return value
+
+
+    # --------------------------------------------------------
+    # NEO4J ELEMENT ID FALLBACK
+    # --------------------------------------------------------
+
+    try:
+        return str(node.element_id)
+    except Exception:
+        return "Unknown Entity"
+
+
+# ============================================================
+# NODE SERIALIZATION
+# ============================================================
+
+def serialize_node(node):
+
+    node_type = get_node_type(node)
+
+    props = dict(node)
+
+    canonical_id = clean_value(
+        props.get("canonical_id")
+    )
+
+    node_id = (
+        canonical_id
+        or clean_value(props.get("id"))
+        or str(node.element_id)
+    )
+
+    name = get_node_name(node)
 
     return {
-        "id": node_id,
-        "type": get_node_type(node),
-        "label": get_node_label(node),
-        "properties": dict(node),
+        "id": str(node_id),
+
+        "node_type": node_type,
+
+        "name": name,
+
+        "canonical_id": canonical_id,
+
+        "properties": props,
     }
 
+
+# ============================================================
+# EDGE SERIALIZATION
+# ============================================================
 
 def serialize_edge(
-    relationship: Any,
-    source_id: str,
-    target_id: str,
-) -> Dict[str, Any]:
+    relationship,
+    source_node,
+    target_node,
+):
+
+    relationship_type = (
+        relationship.type
+        if hasattr(
+            relationship,
+            "type",
+        )
+        else "RELATED"
+    )
+
+    source_id = (
+        clean_value(
+            dict(source_node).get(
+                "canonical_id"
+            )
+        )
+        or clean_value(
+            dict(source_node).get(
+                "id"
+            )
+        )
+        or str(
+            source_node.element_id
+        )
+    )
+
+    target_id = (
+        clean_value(
+            dict(target_node).get(
+                "canonical_id"
+            )
+        )
+        or clean_value(
+            dict(target_node).get(
+                "id"
+            )
+        )
+        or str(
+            target_node.element_id
+        )
+    )
+
     return {
-        "id": str(relationship.id),
-        "source": source_id,
-        "target": target_id,
-        "relationship": relationship.type,
-        "properties": dict(relationship),
+        "id": str(
+            relationship.element_id
+        ),
+
+        "source": str(
+            source_id
+        ),
+
+        "target": str(
+            target_id
+        ),
+
+        "relationship_type": relationship_type,
+
+        "properties": dict(
+            relationship
+        ),
     }
 
 
-# ---------------------------------------------------------
-# CASE CHECK
-# ---------------------------------------------------------
+# ============================================================
+# GET FIR ENTITIES
+# ============================================================
 
-def case_exists(case_id: str) -> bool:
-    query = """
-    MATCH (c:Case {id: $case_id})
-    RETURN c
-    LIMIT 1
-    """
+@router.get(
+    "/case/{case_id}/entities"
+)
+def get_case_entities(
+    case_id: str,
+):
 
-    with driver.session() as session:
-        record = session.run(
-            query,
-            case_id=case_id,
-        ).single()
-
-        return record is not None
-
-
-# ---------------------------------------------------------
-# BUILD LARGE MASTER SUBGRAPH
-# ---------------------------------------------------------
-
-def build_case_network(case_id: str):
-    """
-    Builds a reasonably large investigation graph.
-
-    Case
-      ↓
-    Evidence
-      ↓
-    Entities
-      ↓
-    Related entities
-
-    Everything is still restricted to entities that belong
-    to the selected investigation.
-    """
+    normalized_case_id = (
+        normalize_case_id(case_id)
+    )
 
     query = """
-    MATCH (c:Case {id: $case_id})
+    MATCH (case_node:Case)
+    WHERE
+        case_node.id = $case_id
+        OR case_node.fir_number = $raw_case_id
 
-    MATCH (c)-[:BELONGS_TO]-(e:Evidence)
+    MATCH (case_node)-[:BELONGS_TO]-(evidence:Evidence)
 
-    OPTIONAL MATCH path =
-        (e)-[*1..2]-(connected)
-
-    WITH c, e, connected
-
-    WHERE connected IS NULL
-       OR NOT "Case" IN labels(connected)
-       OR connected.id = $case_id
-
-    RETURN c, e, connected
-    """
-
-    nodes: Dict[str, Dict[str, Any]] = {}
-    edges: Dict[str, Dict[str, Any]] = {}
-
-    with driver.session() as session:
-        result = session.run(
-            query,
-            case_id=case_id,
-        )
-
-        for record in result:
-            case_node = record["c"]
-            evidence_node = record["e"]
-            connected_node = record["connected"]
-
-            case_id_value = get_node_id(case_node)
-            evidence_id = get_node_id(evidence_node)
-
-            if case_id_value:
-                nodes[case_id_value] = serialize_node(case_node)
-
-            if evidence_id:
-                nodes[evidence_id] = serialize_node(evidence_node)
-
-            if connected_node is None:
-                continue
-
-            connected_id = get_node_id(connected_node)
-
-            if not connected_id:
-                continue
-
-            nodes[connected_id] = serialize_node(connected_node)
-
-    # -----------------------------------------------------
-    # Get relationships between all discovered nodes
-    # -----------------------------------------------------
-
-    discovered_ids = list(nodes.keys())
-
-    if not discovered_ids:
-        return {
-            "case_id": case_id,
-            "nodes": [],
-            "edges": [],
-        }
-
-    relationship_query = """
-    MATCH (a)-[r]-(b)
+    MATCH (evidence)-[]-(entity)
 
     WHERE
-        (
-            ("Case" IN labels(a) AND a.id IN $node_ids)
-            OR
-            ("Evidence" IN labels(a) AND a.id IN $node_ids)
-            OR
-            (NOT "Case" IN labels(a)
-             AND NOT "Evidence" IN labels(a)
-             AND a.canonical_id IN $node_ids)
-        )
+        NOT entity:Case
+        AND NOT entity:Evidence
 
-    AND
-        (
-            ("Case" IN labels(b) AND b.id IN $node_ids)
-            OR
-            ("Evidence" IN labels(b) AND b.id IN $node_ids)
-            OR
-            (NOT "Case" IN labels(b)
-             AND NOT "Evidence" IN labels(b)
-             AND b.canonical_id IN $node_ids)
-        )
+    RETURN DISTINCT entity
 
-    RETURN a, r, b
+    ORDER BY
+        CASE
+            WHEN entity:Person THEN 1
+            WHEN entity:Phone THEN 2
+            WHEN entity:Vehicle THEN 3
+            WHEN entity:Location THEN 4
+            WHEN entity:Account THEN 5
+            WHEN entity:Organization THEN 6
+            ELSE 7
+        END
     """
 
-    with driver.session() as session:
-        result = session.run(
-            relationship_query,
-            node_ids=discovered_ids,
-        )
+    try:
 
-        for record in result:
-            a = record["a"]
-            relationship = record["r"]
-            b = record["b"]
+        with driver.session() as session:
 
-            source_id = get_node_id(a)
-            target_id = get_node_id(b)
-
-            if not source_id or not target_id:
-                continue
-
-            if source_id not in nodes:
-                continue
-
-            if target_id not in nodes:
-                continue
-
-            edge_id = str(relationship.id)
-
-            edges[edge_id] = serialize_edge(
-                relationship,
-                source_id,
-                target_id,
+            result = session.run(
+                query,
+                case_id=normalized_case_id,
+                raw_case_id=case_id,
             )
 
-    return {
-        "case_id": case_id,
-        "nodes": list(nodes.values()),
-        "edges": list(edges.values()),
-    }
+            entities = []
 
+            seen = set()
 
-# ---------------------------------------------------------
-# FOCUSED SUBGRAPH
-# ---------------------------------------------------------
+            for record in result:
 
-def build_entity_subgraph(
-    entity_id: str,
-    case_id: str,
-    depth: int = 2,
-):
-    """
-    Generates a larger subgraph around the selected entity.
+                entity = record["entity"]
 
-    Important:
-    We only allow nodes that are already part of the selected
-    case investigation.
-    """
+                serialized = serialize_node(
+                    entity
+                )
 
-    # First determine all nodes belonging to this investigation.
-    allowed_query = """
-    MATCH (c:Case {id: $case_id})
-    MATCH (c)-[:BELONGS_TO]-(e:Evidence)
+                entity_id = serialized["id"]
 
-    OPTIONAL MATCH (e)-[*1..2]-(entity)
+                if entity_id in seen:
+                    continue
 
-    WITH collect(DISTINCT c) +
-         collect(DISTINCT e) +
-         collect(DISTINCT entity) AS raw_nodes
+                seen.add(
+                    entity_id
+                )
 
-    UNWIND raw_nodes AS n
+                entities.append(
+                    serialized
+                )
 
-    WITH DISTINCT n
-    WHERE n IS NOT NULL
+        return {
+            "status": "success",
 
-    RETURN
-        CASE
-            WHEN "Case" IN labels(n) THEN n.id
-            WHEN "Evidence" IN labels(n) THEN n.id
-            ELSE n.canonical_id
-        END AS node_id
-    """
+            "case_id":
+                normalized_case_id,
 
-    allowed_ids: Set[str] = set()
+            "count":
+                len(entities),
 
-    with driver.session() as session:
-        result = session.run(
-            allowed_query,
-            case_id=case_id,
-        )
+            "entities":
+                entities,
+        }
 
-        for record in result:
-            node_id = record["node_id"]
+    except Exception as e:
 
-            if node_id:
-                allowed_ids.add(node_id)
-
-    if entity_id not in allowed_ids:
         raise HTTPException(
-            status_code=404,
+            status_code=500,
             detail=(
-                f"Entity {entity_id} is not part of "
-                f"investigation {case_id}"
+                f"Failed to load FIR entities: {str(e)}"
             ),
         )
 
-    # -----------------------------------------------------
-    # Find selected entity and neighbours.
-    # -----------------------------------------------------
 
-    query = """
-    MATCH (center)
+# ============================================================
+# GET ENTITY GRAPH
+# ============================================================
+
+@router.get(
+    "/case/{case_id}/entity/{entity_id:path}"
+)
+def get_entity_graph(
+    case_id: str,
+    entity_id: str,
+):
+
+    normalized_case_id = (
+        normalize_case_id(case_id)
+    )
+
+    # --------------------------------------------------------
+    # FIR ENTITY UNIVERSE
+    # --------------------------------------------------------
+
+    universe_query = """
+    MATCH (case_node:Case)
+    WHERE
+        case_node.id = $case_id
+        OR case_node.fir_number = $raw_case_id
+
+    MATCH (case_node)-[:BELONGS_TO]-(evidence:Evidence)
+
+    MATCH (evidence)-[]-(entity)
 
     WHERE
-        ("Case" IN labels(center) AND center.id = $entity_id)
-        OR
-        ("Evidence" IN labels(center) AND center.id = $entity_id)
-        OR
-        ("CourtCase" IN labels(center) AND center.id = $entity_id)
-        OR
-        ("Person" IN labels(center) AND center.canonical_id = $entity_id)
-        OR
-        ("Phone" IN labels(center) AND center.canonical_id = $entity_id)
-        OR
-        ("Vehicle" IN labels(center) AND center.canonical_id = $entity_id)
-        OR
-        ("Location" IN labels(center) AND center.canonical_id = $entity_id)
-        OR
-        ("Account" IN labels(center) AND center.canonical_id = $entity_id)
-        OR
-        ("Organization" IN labels(center) AND center.canonical_id = $entity_id)
+        NOT entity:Case
+        AND NOT entity:Evidence
 
-    MATCH path =
-        (center)-[*1..2]-(neighbor)
-
-    RETURN center, path, neighbor
+    RETURN DISTINCT entity
     """
 
-    nodes: Dict[str, Dict[str, Any]] = {}
-    edges: Dict[str, Dict[str, Any]] = {}
+    # --------------------------------------------------------
+    # SELECTED ENTITY
+    # --------------------------------------------------------
 
-    with driver.session() as session:
-        result = session.run(
-            query,
-            entity_id=entity_id,
+    selected_query = """
+    MATCH (case_node:Case)
+    WHERE
+        case_node.id = $case_id
+        OR case_node.fir_number = $raw_case_id
+
+    MATCH (case_node)-[:BELONGS_TO]-(evidence:Evidence)
+
+    MATCH (evidence)-[]-(entity)
+
+    WHERE
+        NOT entity:Case
+        AND NOT entity:Evidence
+        AND (
+            entity.canonical_id = $entity_id
+            OR entity.id = $entity_id
+            OR entity.name = $entity_id
+            OR entity.phone_number = $entity_id
+            OR entity.vehicle_number = $entity_id
+            OR entity.registration_number = $entity_id
+            OR entity.location_name = $entity_id
+            OR entity.account_number = $entity_id
         )
 
-        for record in result:
-            center = record["center"]
-            neighbor = record["neighbor"]
-            path = record["path"]
+    RETURN DISTINCT entity
+    LIMIT 1
+    """
 
-            center_id = get_node_id(center)
-
-            if center_id and center_id in allowed_ids:
-                nodes[center_id] = serialize_node(center)
-
-            if neighbor is not None:
-                neighbor_id = get_node_id(neighbor)
-
-                if (
-                    neighbor_id
-                    and neighbor_id in allowed_ids
-                ):
-                    nodes[neighbor_id] = serialize_node(neighbor)
-
-            if path is None:
-                continue
-
-            relationships = list(path.relationships)
-            path_nodes = list(path.nodes)
-
-            for index, relationship in enumerate(relationships):
-                source = path_nodes[index]
-                target = path_nodes[index + 1]
-
-                source_id = get_node_id(source)
-                target_id = get_node_id(target)
-
-                if not source_id or not target_id:
-                    continue
-
-                if source_id not in allowed_ids:
-                    continue
-
-                if target_id not in allowed_ids:
-                    continue
-
-                edges[str(relationship.id)] = serialize_edge(
-                    relationship,
-                    source_id,
-                    target_id,
-                )
-
-    return {
-        "case_id": case_id,
-        "focused_entity": entity_id,
-        "nodes": list(nodes.values()),
-        "edges": list(edges.values()),
-    }
-
-
-# ---------------------------------------------------------
-# MASTER NETWORK
-# ---------------------------------------------------------
-
-@router.get("")
-def get_network(
-    case_id: str = Query(...),
-):
     try:
-        normalized_case_id = normalize_case_id(case_id)
 
-        if not case_exists(normalized_case_id):
-            raise HTTPException(
-                status_code=404,
-                detail=(
-                    f"Investigation "
-                    f"{normalized_case_id} not found"
-                ),
+        with driver.session() as session:
+
+            # ------------------------------------------------
+            # BUILD FIR ENTITY UNIVERSE
+            # ------------------------------------------------
+
+            universe_result = session.run(
+                universe_query,
+                case_id=normalized_case_id,
+                raw_case_id=case_id,
             )
 
-        network = build_case_network(
-            normalized_case_id
-        )
+            universe_nodes = []
 
-        return {
-            "status": "success",
-            "network": network,
-        }
+            universe_element_ids = set()
+
+            for record in universe_result:
+
+                node = record["entity"]
+
+                universe_nodes.append(
+                    node
+                )
+
+                universe_element_ids.add(
+                    str(
+                        node.element_id
+                    )
+                )
+
+
+            # ------------------------------------------------
+            # FIND SELECTED ENTITY
+            # ------------------------------------------------
+
+            selected_result = session.run(
+                selected_query,
+                case_id=normalized_case_id,
+                raw_case_id=case_id,
+                entity_id=entity_id,
+            )
+
+            selected_record = (
+                selected_result.single()
+            )
+
+            if not selected_record:
+
+                raise HTTPException(
+                    status_code=404,
+                    detail=(
+                        "Entity not found "
+                        "inside the selected FIR."
+                    ),
+                )
+
+
+            selected_node = (
+                selected_record[
+                    "entity"
+                ]
+            )
+
+
+            # ------------------------------------------------
+            # 2-HOP GRAPH
+            # ------------------------------------------------
+
+            graph_query = """
+            MATCH (selected)
+            WHERE elementId(selected) = $selected_element_id
+
+            MATCH path =
+                (selected)-[*1..2]-(connected)
+
+            RETURN path
+            """
+
+            graph_result = session.run(
+                graph_query,
+                selected_element_id=
+                    selected_node.element_id,
+            )
+
+
+            graph_nodes = {}
+
+            graph_edges = {}
+
+
+            # ------------------------------------------------
+            # ADD SELECTED NODE
+            # ------------------------------------------------
+
+            graph_nodes[
+                str(
+                    selected_node.element_id
+                )
+            ] = selected_node
+
+
+            # ------------------------------------------------
+            # PROCESS PATHS
+            # ------------------------------------------------
+
+            for record in graph_result:
+
+                path = record["path"]
+
+                for node in path.nodes:
+
+                    element_id = str(
+                        node.element_id
+                    )
+
+                    # Only allow entities belonging
+                    # to the selected FIR.
+
+                    if (
+                        element_id
+                        not in
+                        universe_element_ids
+                    ):
+                        continue
+
+                    graph_nodes[
+                        element_id
+                    ] = node
+
+
+                for relationship in path.relationships:
+
+                    start_id = str(
+                        relationship.start_node.element_id
+                    )
+
+                    end_id = str(
+                        relationship.end_node.element_id
+                    )
+
+
+                    if (
+                        start_id
+                        not in
+                        universe_element_ids
+                    ):
+                        continue
+
+                    if (
+                        end_id
+                        not in
+                        universe_element_ids
+                    ):
+                        continue
+
+
+                    source_node = (
+                        graph_nodes.get(
+                            start_id
+                        )
+                    )
+
+                    target_node = (
+                        graph_nodes.get(
+                            end_id
+                        )
+                    )
+
+
+                    if (
+                        source_node is None
+                        or target_node is None
+                    ):
+                        continue
+
+
+                    serialized_edge = (
+                        serialize_edge(
+                            relationship,
+                            source_node,
+                            target_node,
+                        )
+                    )
+
+
+                    graph_edges[
+                        serialized_edge["id"]
+                    ] = (
+                        serialized_edge
+                    )
+
+
+            # ------------------------------------------------
+            # SERIALIZE NODES
+            # ------------------------------------------------
+
+            serialized_nodes = []
+
+            for node in graph_nodes.values():
+
+                serialized_nodes.append(
+                    serialize_node(
+                        node
+                    )
+                )
+
+
+            # ------------------------------------------------
+            # SERIALIZE EDGES
+            # ------------------------------------------------
+
+            serialized_edges = list(
+                graph_edges.values()
+            )
+
+
+            return {
+
+                "status":
+                    "success",
+
+                "case_id":
+                    normalized_case_id,
+
+                "selected_entity":
+                    serialize_node(
+                        selected_node
+                    ),
+
+                "nodes":
+                    serialized_nodes,
+
+                "edges":
+                    serialized_edges,
+
+            }
+
 
     except HTTPException:
         raise
 
-    except Exception as exc:
-        print("NETWORK ERROR:", exc)
+    except Exception as e:
 
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to build network: {exc}",
-        )
-
-
-# ---------------------------------------------------------
-# ENTITY SUBGRAPH
-# ---------------------------------------------------------
-
-@router.get("/entity/{entity_id:path}")
-def get_entity_network(
-    entity_id: str,
-    case_id: str = Query(...),
-):
-    try:
-        normalized_case_id = normalize_case_id(case_id)
-
-        network = build_entity_subgraph(
-            entity_id=entity_id,
-            case_id=normalized_case_id,
-        )
-
-        return {
-            "status": "success",
-            "network": network,
-        }
-
-    except HTTPException:
-        raise
-
-    except Exception as exc:
-        print("ENTITY NETWORK ERROR:", exc)
-
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to build entity subgraph: {exc}",
+            detail=(
+                f"Failed to build entity graph: {str(e)}"
+            ),
         )
